@@ -5,6 +5,7 @@ DROP TABLE IF EXISTS niveau;
 DROP TABLE IF EXISTS info_ecole;
 DROP TABLE IF EXISTS danse;
 DROP TABLE IF EXISTS info_ecole;
+DROP TABLE IF EXISTS inscription_cours;
 
 
 
@@ -89,7 +90,6 @@ CREATE TABLE niveau (
     nom TEXT NOT NULL UNIQUE,
     description TEXT DEFAULT ''
 );
-
 -- -------------------------
 -- Table Info École
 -- -------------------------
@@ -102,8 +102,7 @@ CREATE TABLE info_ecole (
     heure_debut_planning TEXT,
     heure_fin_planning TEXT,
     jour_debut_planning TEXT,
-    jour_fin_planning TEXT
-    
+    jour_fin_planning TEXT  
 );
 
 CREATE TABLE cours (
@@ -133,6 +132,20 @@ CREATE TABLE cours_prof (
 
     FOREIGN KEY (cours_id) REFERENCES cours(id) ON DELETE CASCADE,
     FOREIGN KEY (prof_id) REFERENCES prof(id)
+);
+
+CREATE TABLE inscription_cours (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cours_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    role TEXT CHECK(role IN ('Leader', 'Follower')) NOT NULL,
+
+    FOREIGN KEY (cours_id) REFERENCES cours(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+
+    
+
+    UNIQUE(cours_id, user_id)
 );
 
 CREATE INDEX idx_cours_saison ON cours(saison);

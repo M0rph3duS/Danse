@@ -8,7 +8,15 @@
 
 """
 
+modifier la taille fenetre modal inscirption cours fonction si solo
+valider l'inscription
+rajouter un contour pour les cours déja pris, et si on double clic sur un cours existant, faudrait que le bouto ns'inscrire se change en desinscrire, ça serait topismale
+
 permettre le choix du cours et l'inscription depuis une modale planning
+
+mettre un carré flottant sur le planning avec description en mouseover
+améliorer l'hover sur le planning la c'est moche claro
+
 
 """
 #    .....     .                                                                  s    
@@ -32,6 +40,7 @@ import tkinter as tk
 from tkinter import ttk,messagebox,colorchooser
 import re
 from datetime import datetime
+from typing import ReadOnly
 
 
 
@@ -274,17 +283,20 @@ class PlanningPage(BasePage):
     LEFT_MARGIN = 50
     TOP_MARGIN = 50
 
-    def __init__(self, parent, controller):
+    def __init__(self, parent, controller ,drag_enabled=True):
         super().__init__(parent, controller)
 
         self.controller = controller
 
         self.cours_items = {}  # {cours_id: {"rect": rect_id, "text": text_id}}
         self.drag_data = {}    # pour stocker les infos de drag
-
+        self.hovered_cours_id = None  # tracking
         self.day_positions = {}
 
         self.LEFT_MARGIN = 30  # Marge pour les heures
+
+        # Permettre de déplacer les cases
+        self.drag_enabled = drag_enabled
 
         self.drag_data = {
             "cours_id": None,
@@ -298,7 +310,10 @@ class PlanningPage(BasePage):
         header_frame.pack(fill="x", pady=10)
 
         # Titre centré
-        label_title = tk.Label(header_frame, text="Planning", font=("Arial", 16, "bold"))
+        if self.drag_enabled:
+            label_title = tk.Label(header_frame, text="Planning", font=("Arial", 16, "bold"))
+        else:
+            label_title = tk.Label(header_frame, text="Inscription a un cours", font=("Arial", 16, "bold"))
         label_title.pack()
 
         # Ligne centrée
@@ -307,11 +322,13 @@ class PlanningPage(BasePage):
 
         # --- Label Saison ---
         label_saison = tk.Label(controls_frame, text="Saison :")
-        label_saison.pack(side="left", padx=(0, 5))
+        if self.drag_enabled:
+            label_saison.pack(side="left", padx=(0, 5))
 
         # --- Combobox ---
         self.cb_saison = ttk.Combobox(controls_frame, state="readonly", width=10)
-        self.cb_saison.pack(side="left", padx=5)
+        if self.drag_enabled:
+            self.cb_saison.pack(side="left", padx=5)
 
         load_cb_saison(self.cb_saison)
         self.cb_saison.bind("<<ComboboxSelected>>", self.on_saison_change)
@@ -342,7 +359,7 @@ class PlanningPage(BasePage):
         self.canvas.pack(expand=True)
 
         # --- Bouton Retour ---
-        self.btRetour = tk.Button(self, text="Retour", command=lambda: self.controller.show_frame("StartPage"),underline=0)
+        self.btRetour = tk.Button(self, text="Retour", command=lambda: self.close(),underline=0)
         self.btRetour.pack(pady=10)
 
         # Variables pour le planning
@@ -354,7 +371,7 @@ class PlanningPage(BasePage):
         self.day_width = 150       # largeur totale par jour
 
         self.bind_shortcuts({
-            "<Alt-r>": lambda e: self.controller.show_frame("StartPage"),
+            "<Alt-r>": lambda e: self.close(),
             "<Up>": lambda e: self.on_key_up(e),
             "<Down>": lambda e: self.on_key_down(e),
         })
@@ -369,6 +386,10 @@ class PlanningPage(BasePage):
         self.first_hour, self.last_hour = self.get_time_bounds()
         self.redraw_canvas()
         self.draw_courses()
+
+    def close(self):
+        self.controller.show_frame("StartPage")
+        
 
     # ------------------------
     # Récupérer le nombre de salles
@@ -594,6 +615,8 @@ class PlanningPage(BasePage):
             self.canvas.tag_bind(item, "<ButtonRelease-1>", self.on_drag_stop)
 
     def on_drag_start(self, event):
+        if not self.drag_enabled:
+            return
         # trouver l'item cliqué
         item = self.canvas.find_closest(event.x, event.y)[0]
 
@@ -621,6 +644,8 @@ class PlanningPage(BasePage):
         }
 
     def on_drag_motion(self, event):
+        if not self.drag_enabled:
+            return
         if not self.drag_data or "x" not in self.drag_data:
             return  # rien à faire
 
@@ -641,6 +666,8 @@ class PlanningPage(BasePage):
         self.drag_data["y"] = event.y
 
     def on_drag_stop(self, event):
+        if not self.drag_enabled:
+            return
         if not self.drag_data:
             return
         saison = self.cb_saison.get()
@@ -700,6 +727,50 @@ class PlanningPage(BasePage):
 
         self.drag_data = {}
 
+     
+    # # ------------------------
+    # # Gestion du halo mouseover
+    # # ------------------------
+    # def on_hover_enter(self, event):
+    #     item = self.canvas.find_closest(event.x, event.y)[0]
+
+    #     cours_id = None
+    #     for cid, data in self.cours_items.items():
+    #         if item == data["rect"] or item == data["text"]:
+    #             cours_id = cid
+    #             break
+
+    #     if not cours_id:
+    #         return
+
+    #     # éviter de refaire 50 fois le même
+    #     if self.hovered_cours_id == cours_id:
+    #         return
+
+    #     self.hovered_cours_id = cours_id
+
+    #     rect = self.cours_items[cours_id]["rect"]
+    #     text_id = self.cours_items[cours_id]["text"]
+    #     self.canvas.itemconfig(rect, outline="#00AEEF", width=4)
+    #     self.canvas.tag_raise(rect)
+    #     self.canvas.tag_raise(self.cours_items[cours_id]["text"])
+
+    #     # effet halo (plus épais + couleur)
+    #     self.canvas.itemconfig(rect, outline="#00AEEF", width=3)
+
+    # def on_hover_leave(self, event):
+    #     if not self.hovered_cours_id:
+    #         return
+
+    #     rect = self.cours_items[self.hovered_cours_id]["rect"]
+
+    #     # reset style
+    #     self.canvas.itemconfig(rect, outline="black", width=1)
+
+    #     self.hovered_cours_id = None
+
+
+
 
     def on_saison_change(self, event):
         self.salles = self.get_salles()
@@ -719,6 +790,9 @@ class PlanningPage(BasePage):
     def on_canvas_double_click(self, event):
         # Vérifie si on a cliqué sur un item existant
         clicked_items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+
+        if not self.drag_enabled:
+            return
 
         if clicked_items:
             return
@@ -1270,6 +1344,7 @@ class EditCoursModal(tk.Toplevel):
         debut = self.cb_heure_debut.get()
         fin = self.cb_heure_fin.get()
         jour = self.cb_jour.get()
+        saison = self.parent.cb_saison.get()
         commentaires = self.txt_commentaire.get("1.0", "end-1c")
 
         # --- Vérifications basiques ---
@@ -1296,7 +1371,7 @@ class EditCoursModal(tk.Toplevel):
                 return
 
         # --- Vérification disponibilité salle ---
-        if not check_salle_disponible(salle_id, jour, debut, fin, ignore_cours_id=self.cours_id):
+        if not check_salle_disponible(salle_id, jour, debut, fin, saison, ignore_cours_id=self.cours_id):
             return messagebox.showerror(
                 "Erreur",
                 f"La salle {self.cb_salle.get()} n'est pas libre de {debut} à {fin}."
@@ -1323,6 +1398,7 @@ class EditCoursModal(tk.Toplevel):
             debut,
             fin,
             commentaires,
+            saison,
             prof_ids
         )
 
@@ -2011,7 +2087,8 @@ class EditUserPage(BasePage):
         self.add_course_btn = tk.Button(
             editUser_cours_frame,
             text="Ajouter un cours",
-            command=self.open_planning_modal
+            command=lambda: self.open_planning_modal(self.user_id),
+            underline=11
         )
         self.add_course_btn.grid(row=1, column=0, sticky="e", padx=5, pady=5)
 
@@ -2035,6 +2112,7 @@ class EditUserPage(BasePage):
             "<Alt-v>": lambda e: self.update_process(),
             "<Alt-r>": lambda e: self.controller.show_frame("StartPage"),
             "<Alt-a>": lambda e: self.accoupler(),
+            "<Alt-c>": lambda e: self.open_planning_modal(self.user_id),
             "<Alt-x>": lambda e: self.divorce()
         })
 
@@ -2064,8 +2142,13 @@ class EditUserPage(BasePage):
         # configure Tab/Shift+Tab
         self.setup_tab_navigation()
 
-    def open_planning_modal(self):
-        PlanningModal(self, self.controller)
+    def open_planning_modal(self,id_user):
+        win = PlanningModal(self, self.controller, id_user)
+        self.wait_window(win) 
+        self.set_data(id_user)
+        print('plop')
+        
+
 
     def update_process(self):
         self.update()
@@ -2157,14 +2240,10 @@ class EditUserPage(BasePage):
         Permet de récupérer les données d'un utilisateur via son id
         """
         data = select_user_data(user_id)
+        self.user_id = user_id
 
-        # Accord du titre :
-        if data[10] == 'Leader':
-            terminaison = ''
-        else:
-            terminaison = 'e'
             # --- Modification du titre ---
-        self.frameTitle.config(text=f"Adhérent{terminaison} depuis {data[13]}")
+        self.frameTitle.config(text=f"Adhérent depuis {data[13]}")
 
         self.user_id = user_id
             # --- Identification ---
@@ -2283,42 +2362,264 @@ class EditUserPage(BasePage):
         self.editUser_commentaire_conjoint.config(state="disabled")
 
 class PlanningModal(tk.Toplevel):
-    def __init__(self, parent, controller, on_select_callback=None):
+    def __init__(self, parent, controller, id_user, on_select_callback=None):
         super().__init__(parent)
 
         self.title("Sélection du cours")
-        self.geometry("1200x800")
+        self.geometry("1300x900")
 
         self.transient(parent)
         self.grab_set()
         self.focus_force()
+        self.id_user = id_user
+        self.controller = controller 
 
         # callback quand on clique sur un cours
         self.on_select_callback = on_select_callback
 
         # injecter le planning
-        self.planning = PlanningPage(self, controller)
+        self.planning = PlanningPage(self, controller,drag_enabled=False)
         self.planning.pack(fill="both", expand=True)
         self.planning.on_show()
 
+        self.planning.drag_enabled = False
+        
+
         # 🔥 override du comportement click cours
-        self.planning.on_click_cours = self.on_cours_selected
+        self.planning.on_click_cours = self.on_click_cours
 
-    def on_cours_selected(self, cours_id):
-        if self.on_select_callback:
-            self.on_select_callback(cours_id)
+        # 🔥 override du comportement close
+        self.planning.close = self.close
 
+        # Suppression du drag n drop
+        self.planning.on_drag_start = self.on_drag_start
+        self.planning.on_drag_stop = self.on_drag_stop
+        self.planning.on_drag_motion = self.on_drag_motion
+        
+
+
+
+        # self.bind_all("<Alt-r>",lambda e: self.destroy())
+        self.bind("<Alt-r>", lambda e: self.destroy())
+        
+        # Override des fonctions
+    def close(self):
         self.destroy()
 
-    def open_planning_modal(self):
-        PlanningModal(
-            self,
-            self.controller,
-            on_select_callback=self.on_cours_choisi
+    def on_drag_start():
+        """
+        Override des fonctions
+        """
+        pass
+    def on_drag_motion():
+        """
+        Override des fonctions
+        """
+        pass
+    def on_drag_stop():
+        """
+        Override des fonctions
+        """
+        pass
+
+    def on_click_cours(self, cours_id):
+        print(f"Double clic sur le cours avec ID :{cours_id} et pour le user {self.id_user}")
+        modal = EditInscriptionModal(
+            parent=self,
+            controller=self.controller,
+            id_user=self.id_user,
+            id_cours=cours_id
         )
+        self.wait_window(modal)
+        self.grab_set()
+        self.focus_force()
+
 
     def on_cours_choisi(self, cours_id):
-        print("Cours sélectionné :", cours_id)
+        modal = EditInscriptionModal(
+            parent=self,
+            controller=self.planning.controller,
+            id_user=self.id_user,
+            id_cours=cours_id
+        )
+        
+        # si tu veux attendre que la modale soit fermée avant de continuer
+        self.wait_window(modal)
+
+class EditInscriptionModal(tk.Toplevel):
+    def __init__(self, parent, controller, id_user, id_cours):
+        super().__init__(parent)
+        self.title("Inscription au cours")
+        self.transient(parent)
+        self.update_idletasks()
+        self.grab_set()
+        self.focus_force()
+
+        self.controller = controller
+        self.id_user = id_user
+        self.id_cours = id_cours
+
+        self.cours_info = self.get_cours_info(id_cours)
+        self.user_info = self.get_user_info(id_user)
+        self.partenaire_info = self.get_partenaire_info(self.user_info)
+
+        if self.partenaire_info != None:
+            self.geometry("400x350")
+        else:
+            self.geometry("400x280")
+
+
+        self.build_widgets()
+
+    # ----------------------
+    # Build widgets
+    # ----------------------
+    def build_widgets(self):
+        # --- Récapitulatif cours ---
+        recap_frame = tk.Frame(self)
+        recap_frame.pack(pady=10, fill="x")
+
+        tk.Label(recap_frame, text=f"Danse : {self.cours_info['danse']}").pack(fill="x")
+        tk.Label(recap_frame, text=f"Niveau : {self.cours_info['niveau']}").pack(fill="x")
+        tk.Label(recap_frame, text=f"Jour : {self.cours_info['jour']}").pack(fill="x")
+        tk.Label(recap_frame, text=f"Heure : {self.cours_info['debut']} - {self.cours_info['fin']}").pack(fill="x")
+        tk.Label(recap_frame, text=f"Prof : {self.cours_info['prof']}").pack(fill="x")
+
+        # --- Zone d'inscription ---
+        inscrit_frame = tk.Frame(self)
+        inscrit_frame.pack(pady=10, fill="x")
+
+        if self.partenaire_info:  # user en couple
+            notebook = ttk.Notebook(inscrit_frame)
+            notebook.pack(expand=True, fill="both")
+
+            # Onglet En couple
+            couple_frame = tk.Frame(notebook)
+            notebook.add(couple_frame, text="En couple")
+
+            # user 1
+            tk.Label(couple_frame, text=f"Role {self.user_info['prenom']} :").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+            self.user_role_cb = ttk.Combobox(couple_frame, values=["Leader", "Follower"],state="readonly")
+            self.user_role_cb.set(self.user_info['role'])
+            self.user_role_cb.grid(row=0, column=1, padx=5, pady=5)
+
+            # partenaire
+            tk.Label(couple_frame, text=f"Role {self.partenaire_info['prenom']} :").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+            self.partner_role_cb = ttk.Combobox(couple_frame, values=["Leader", "Follower"],state="readonly")
+            self.partner_role_cb.set(self.partenaire_info['role'])
+            self.partner_role_cb.grid(row=1, column=1, padx=5, pady=5)
+
+            # Onglet Solo
+            solo_frame = tk.Frame(notebook)
+            notebook.add(solo_frame, text="Solo")
+            tk.Label(solo_frame, text="Role :").pack(side="left", padx=5, pady=5)
+            self.solo_role_cb = ttk.Combobox(solo_frame, values=["Leader", "Follower"], state="readonly")
+            self.solo_role_cb.set(self.user_info['role'])
+            self.solo_role_cb.pack(side="left", padx=5)
+
+
+        else:  # user solo sans couple
+            self.solo_role_cb = ttk.Combobox(inscrit_frame, values=["Leader", "Follower"],state="readonly")
+            self.solo_role_cb.set(self.user_info['role'])
+            self.solo_role_cb.pack(padx=5)
+
+        # --- Boutons ---
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(pady=15)
+        tk.Button(btn_frame, text="Inscrire", width=12, command=self.inscrire).pack(padx=10)
+        tk.Button(btn_frame, text="Retour", width=12, command=self.destroy,underline=0).pack(padx=10)
+
+
+        self.bind("<Alt-r>",lambda e: self.destroy())
+        self.bind("<Alt-i>",lambda e: self.inscrire())
+
+    def get_cours_info(self, id_cours):
+        """
+        Récupère les infos d'un cours pour l'affichage dans la modale.
+        Retourne un dict : danse, niveau, jour, debut, fin, prof
+        """
+        query = """
+            SELECT 
+                d.nom AS danse,
+                n.nom AS niveau,
+                c.jour,
+                c.heure_debut,
+                c.heure_fin,
+                GROUP_CONCAT(p.nom, ', ') AS profs
+            FROM cours c
+            JOIN danse d ON c.danse_id = d.id
+            JOIN niveau n ON c.niveau_id = n.id
+            LEFT JOIN cours_prof cp ON cp.cours_id = c.id
+            LEFT JOIN prof p ON cp.prof_id = p.id
+            WHERE c.id = ?
+            GROUP BY c.id
+        """
+        row = lanceRequete(query, (id_cours,), fetchone=True)
+        if not row:
+            return None  # ou raise Exception("Cours introuvable")
+
+        danse, niveau, jour, debut, fin, profs = row
+        return {
+            "danse": danse,
+            "niveau": niveau,
+            "jour": jour,
+            "debut": debut,
+            "fin": fin,
+            "prof": profs or ""
+        }
+    
+    def get_user_info(self, id_user):
+        """
+        Récupère les infos d'un utilisateur depuis la table users.
+        Retourne un dict : id, nom, prenom, id_partenaire, role_par_defaut
+        """
+        query = """
+            SELECT id, nom, prenom, partner_id, role
+            FROM users
+            WHERE id = ?
+        """
+        row = lanceRequete(query, (id_user,), fetchone=True)
+        if not row:
+            return None  # ou raise Exception("Utilisateur introuvable")
+
+        user_id, nom, prenom, partner_id, role = row
+        return {
+            "id": user_id,
+            "nom": nom,
+            "prenom": prenom,
+            "id_partenaire": partner_id,
+            "role": role  # rôle par défaut, pour préremplir le combobox
+        }
+    
+    def get_partenaire_info(self, user_info):
+        """
+        Récupère les infos du partenaire d'un utilisateur, si existant.
+        Retourne None si pas de partenaire.
+        """
+        if not user_info.get("id_partenaire"):
+            return None
+
+        query = """
+            SELECT id, nom, prenom, role
+            FROM users
+            WHERE id = ?
+        """
+        row = lanceRequete(query, (user_info["id_partenaire"],), fetchone=True)
+        if not row:
+            return None  # partenaire introuvable
+
+        part_id, nom, prenom, role = row
+        return {
+            "id": part_id,
+            "nom": nom,
+            "prenom": prenom,
+            "role": role  # rôle par défaut du partenaire
+        }
+
+    def inscrire(self):
+        print("Inscrire clicked")
+        # 🔹 placeholder, logique d'inscription ici
+        self.destroy()
 ###########################
 
 ##########################
