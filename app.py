@@ -8,15 +8,9 @@
 
 """
 
-modifier la taille fenetre modal inscirption cours fonction si solo
-valider l'inscription
-rajouter un contour pour les cours déja pris, et si on double clic sur un cours existant, faudrait que le bouto ns'inscrire se change en desinscrire, ça serait topismale
-
 permettre le choix du cours et l'inscription depuis une modale planning
 
 mettre un carré flottant sur le planning avec description en mouseover
-améliorer l'hover sur le planning la c'est moche claro
-
 
 """
 #    .....     .                                                                  s    
@@ -283,7 +277,7 @@ class PlanningPage(BasePage):
     LEFT_MARGIN = 50
     TOP_MARGIN = 50
 
-    def __init__(self, parent, controller ,drag_enabled=True):
+    def __init__(self, parent, controller ,drag_enabled=True, user_id=None):
         super().__init__(parent, controller)
 
         self.controller = controller
@@ -292,7 +286,7 @@ class PlanningPage(BasePage):
         self.drag_data = {}    # pour stocker les infos de drag
         self.hovered_cours_id = None  # tracking
         self.day_positions = {}
-
+        self.user_id = user_id
         self.LEFT_MARGIN = 30  # Marge pour les heures
 
         # Permettre de déplacer les cases
@@ -375,8 +369,6 @@ class PlanningPage(BasePage):
             "<Up>": lambda e: self.on_key_up(e),
             "<Down>": lambda e: self.on_key_down(e),
         })
-        
-        
 
     # ------------------------
     # On show : redessine le planning
@@ -727,51 +719,6 @@ class PlanningPage(BasePage):
 
         self.drag_data = {}
 
-     
-    # # ------------------------
-    # # Gestion du halo mouseover
-    # # ------------------------
-    # def on_hover_enter(self, event):
-    #     item = self.canvas.find_closest(event.x, event.y)[0]
-
-    #     cours_id = None
-    #     for cid, data in self.cours_items.items():
-    #         if item == data["rect"] or item == data["text"]:
-    #             cours_id = cid
-    #             break
-
-    #     if not cours_id:
-    #         return
-
-    #     # éviter de refaire 50 fois le même
-    #     if self.hovered_cours_id == cours_id:
-    #         return
-
-    #     self.hovered_cours_id = cours_id
-
-    #     rect = self.cours_items[cours_id]["rect"]
-    #     text_id = self.cours_items[cours_id]["text"]
-    #     self.canvas.itemconfig(rect, outline="#00AEEF", width=4)
-    #     self.canvas.tag_raise(rect)
-    #     self.canvas.tag_raise(self.cours_items[cours_id]["text"])
-
-    #     # effet halo (plus épais + couleur)
-    #     self.canvas.itemconfig(rect, outline="#00AEEF", width=3)
-
-    # def on_hover_leave(self, event):
-    #     if not self.hovered_cours_id:
-    #         return
-
-    #     rect = self.cours_items[self.hovered_cours_id]["rect"]
-
-    #     # reset style
-    #     self.canvas.itemconfig(rect, outline="black", width=1)
-
-    #     self.hovered_cours_id = None
-
-
-
-
     def on_saison_change(self, event):
         self.salles = self.get_salles()
         self.first_hour, self.last_hour = self.get_time_bounds()
@@ -941,7 +888,6 @@ class PlanningPage(BasePage):
                 font=("Arial", 8)
             )
 
-
     def draw_courses(self):
         LEFT_MARGIN = self.LEFT_MARGIN
 
@@ -983,11 +929,23 @@ class PlanningPage(BasePage):
             y0 = self.heure_to_y(h_debut) + 2
             y1 = self.heure_to_y(h_fin) - 2
 
+            # --- vérifier si l'utilisateur est inscrit ---
+            est_inscrit = False
+            if getattr(self, "user_id", None):
+                inscrit_query = """
+                    SELECT 1 FROM inscription_cours
+                    WHERE user_id = ? AND cours_id = ?
+                """
+                est_inscrit = bool(lanceRequete(inscrit_query, (self.user_id, cours_id), fetchone=True))
+
+            outline_color = "blue" if est_inscrit else "black"
+            outline_width = 8 if est_inscrit else 1
+
             rect = self.canvas.create_rectangle(
                 x0, y0, x1, y1,
                 fill=danse_couleur or "#FFFFFF",
-                outline="black",
-                width=1,
+                outline=outline_color,
+                width=outline_width,
                 tags=("cours_rect",)  # ✅ IMPORTANT
             )
 
@@ -1025,7 +983,8 @@ class PlanningPage(BasePage):
 
         # ⚠️ bind à faire UNE seule fois (pas dans la boucle)
         self.canvas.bind("<Double-Button-1>", self.on_canvas_double_click)
-        
+
+
 class AddCoursModal(tk.Toplevel):
     """
     Modale pour ajouter un cours depuis le planning (double-clic)
@@ -2362,90 +2321,118 @@ class EditUserPage(BasePage):
         self.editUser_commentaire_conjoint.config(state="disabled")
 
 class PlanningModal(tk.Toplevel):
-    def __init__(self, parent, controller, id_user, on_select_callback=None):
+    def __init__(self, parent, controller, id_user=None, on_select_callback=None):
         super().__init__(parent)
 
         self.title("Sélection du cours")
         self.geometry("1300x900")
-
         self.transient(parent)
         self.grab_set()
         self.focus_force()
         self.id_user = id_user
-        self.controller = controller 
-
-        # callback quand on clique sur un cours
+        self.controller = controller
         self.on_select_callback = on_select_callback
 
         # injecter le planning
-        self.planning = PlanningPage(self, controller,drag_enabled=False)
+        self.planning = PlanningPage(self, controller, drag_enabled=False, user_id=self.id_user)
         self.planning.pack(fill="both", expand=True)
         self.planning.on_show()
-
         self.planning.drag_enabled = False
-        
 
-        # 🔥 override du comportement click cours
+        # override click & close
         self.planning.on_click_cours = self.on_click_cours
-
-        # 🔥 override du comportement close
         self.planning.close = self.close
 
-        # Suppression du drag n drop
+        # suppression drag & drop
         self.planning.on_drag_start = self.on_drag_start
         self.planning.on_drag_stop = self.on_drag_stop
         self.planning.on_drag_motion = self.on_drag_motion
-        
 
-
-
-        # self.bind_all("<Alt-r>",lambda e: self.destroy())
         self.bind("<Alt-r>", lambda e: self.destroy())
-        
-        # Override des fonctions
+
     def close(self):
         self.destroy()
 
-    def on_drag_start():
-        """
-        Override des fonctions
-        """
-        pass
-    def on_drag_motion():
-        """
-        Override des fonctions
-        """
-        pass
-    def on_drag_stop():
-        """
-        Override des fonctions
-        """
-        pass
+    def on_drag_start(self, event=None): pass
+    def on_drag_motion(self, event=None): pass
+    def on_drag_stop(self, event=None): pass
+
 
     def on_click_cours(self, cours_id):
-        print(f"Double clic sur le cours avec ID :{cours_id} et pour le user {self.id_user}")
-        modal = EditInscriptionModal(
-            parent=self,
-            controller=self.controller,
-            id_user=self.id_user,
-            id_cours=cours_id
-        )
-        self.wait_window(modal)
-        self.grab_set()
-        self.focus_force()
+        user_id = self.id_user
 
+        # 1️⃣ Vérifier si l'utilisateur est inscrit
+        query_user = """
+            SELECT id
+            FROM inscription_cours
+            WHERE cours_id = ? AND user_id = ?
+        """
+        inscription_user = lanceRequete(query_user, (cours_id, user_id), fetchone=True)
 
-    def on_cours_choisi(self, cours_id):
-        modal = EditInscriptionModal(
-            parent=self,
-            controller=self.planning.controller,
-            id_user=self.id_user,
-            id_cours=cours_id
-        )
-        
-        # si tu veux attendre que la modale soit fermée avant de continuer
-        self.wait_window(modal)
+        if not inscription_user:
+            # L'utilisateur n'est pas inscrit → on peut ouvrir l'EditInscriptionModal normale
+            modal = EditInscriptionModal(
+                parent=self,
+                controller=self.controller,
+                id_user=user_id,
+                id_cours=cours_id
+            )
+            self.wait_window(modal)
+            self.grab_set()
+            self.focus_force()
+            self.planning.draw_courses()
+            return
 
+        # 2️⃣ L'utilisateur est déjà inscrit → demander désinscription
+        desinscrire = messagebox.askyesno("Désinscription", "Voulez-vous vous désinscrire ?")
+        if not desinscrire:
+            return
+
+        # 3️⃣ Vérifier si le partenaire est inscrit
+        # récupérer le partenaire
+        query_partner_info = """SELECT u2.id, u2.prenom
+                                FROM users u1
+                                JOIN users u2 ON u1.partner_id = u2.id
+                                WHERE u1.id = ?"""
+        partner_row = lanceRequete(query_partner_info, (user_id,), fetchone=True)
+        partenaire_id = partner_row[0] if partner_row else None
+        partenaire_prenom = partner_row[1] if partner_row else None
+
+        inscription_partner = None
+        if partenaire_id:
+            query_partner = """
+                SELECT id
+                FROM inscription_cours
+                WHERE cours_id = ? AND user_id = ?
+            """
+            inscription_partner = lanceRequete(query_partner, (cours_id, partenaire_id), fetchone=True)
+
+        # 4️⃣ Supprimer l'inscription de l'utilisateur
+        try:
+            conn = sqlite3.connect("db.sqlite")
+            cur = conn.cursor()
+
+            cur.execute("DELETE FROM inscription_cours WHERE id = ?", (inscription_user[0],))
+
+            # 5️⃣ Demander si on veut désinscrire le partenaire si présent
+            if inscription_partner:
+                desinscrire_partner = messagebox.askyesno(
+                    "Désinscription partenaire",
+                    f"Son conjoint {partenaire_prenom} est également inscrit. Voulez-vous le désinscrire ?"
+                )
+                if desinscrire_partner:
+                    cur.execute("DELETE FROM inscription_cours WHERE id = ?", (inscription_partner[0],))
+
+            conn.commit()
+            self.planning.draw_courses()
+
+        except Exception as e:
+            conn.rollback()
+            messagebox.showerror("Erreur", str(e))
+        finally:
+            conn.close()
+
+            
 class EditInscriptionModal(tk.Toplevel):
     def __init__(self, parent, controller, id_user, id_cours):
         super().__init__(parent)
@@ -2529,6 +2516,7 @@ class EditInscriptionModal(tk.Toplevel):
         tk.Button(btn_frame, text="Inscrire", width=12, command=self.inscrire).pack(padx=10)
         tk.Button(btn_frame, text="Retour", width=12, command=self.destroy,underline=0).pack(padx=10)
 
+        self.notebook = notebook
 
         self.bind("<Alt-r>",lambda e: self.destroy())
         self.bind("<Alt-i>",lambda e: self.inscrire())
@@ -2617,9 +2605,95 @@ class EditInscriptionModal(tk.Toplevel):
         }
 
     def inscrire(self):
-        print("Inscrire clicked")
-        # 🔹 placeholder, logique d'inscription ici
-        self.destroy()
+        inscriptions = []
+
+        # -------------------------
+        # CAS 1 : utilisateur solo
+        # -------------------------
+        if not self.partenaire_info:
+            role = self.solo_role_cb.get()
+
+            inscriptions.append({
+                "user_id": self.id_user,
+                "cours_id": self.id_cours,
+                "role": role
+            })
+
+        # -------------------------
+        # CAS 2 et 3 : utilisateur en couple
+        # -------------------------
+        else:
+            current_tab = self.notebook.tab(self.notebook.select(), "text")
+
+            # --- SOLO ---
+            if current_tab == "Solo":
+                role = self.solo_role_cb.get()
+
+                inscriptions.append({
+                    "user_id": self.id_user,
+                    "cours_id": self.id_cours,
+                    "role": role
+                })
+
+            # --- COUPLE ---
+            elif current_tab == "En couple":
+                user_role = self.user_role_cb.get()
+                partner_role = self.partner_role_cb.get()
+
+                # 🔥 sécurité métier
+                if user_role == partner_role:
+                    return messagebox.showerror(
+                        "Erreur",
+                        "Les rôles doivent être différents en inscription couple. \nPour forcer, passer par 2 inscriptions solo."
+                    )
+
+                inscriptions.append({
+                    "user_id": self.id_user,
+                    "cours_id": self.id_cours,
+                    "role": user_role
+                })
+
+                inscriptions.append({
+                    "user_id": self.partenaire_info["id"],
+                    "cours_id": self.id_cours,
+                    "role": partner_role
+                })
+
+        # -------------------------
+        # 🔥 VERIFICATION DOUBLON
+        # -------------------------
+        for insc in inscriptions:
+            if est_deja_inscrit(insc["user_id"], insc["cours_id"]):
+                return messagebox.showerror(
+                    "Erreur",
+                    "Un des utilisateurs est déjà inscrit à ce cours"
+                )
+
+        conn = sqlite3.connect(DB)
+        cursor = conn.cursor()
+
+        try:
+            for insc in inscriptions:
+                ajouter_inscription(
+                    cursor,
+                    insc["user_id"],
+                    insc["cours_id"],
+                    insc["role"]
+                )
+
+            conn.commit()
+
+            self.destroy()
+
+        except Exception as e:
+            conn.rollback()
+            print(e)
+            messagebox.showerror("Erreur", str(e))
+
+        finally:
+            conn.close()
+
+
 ###########################
 
 ##########################
@@ -3971,6 +4045,29 @@ def load_cb_saison(cb):
         saison = f"{year - 1} / {year}"
 
     cb.set(saison)
+
+def est_deja_inscrit(user_id, cours_id):
+    # conn = sqlite3.connect("database.db")
+    # cursor = conn.cursor()
+# 
+    # cursor.execute("""
+        # SELECT 1 FROM inscription_cours
+        # WHERE user_id = ? AND cours_id = ?
+    # """, (user_id, cours_id))
+# 
+    # result = cursor.fetchone()
+    # conn.close()
+    # return result is not None
+    return lanceRequete("""
+        SELECT 1 FROM inscription_cours
+        WHERE user_id = ? AND cours_id = ?
+    """,(user_id, cours_id),fetch=True)
+
+def ajouter_inscription(cursor, user_id, cours_id, role):
+    cursor.execute("""
+        INSERT INTO inscription_cours (user_id, cours_id, role)
+        VALUES (?, ?, ?)
+    """, (user_id, cours_id, role))
 
 
 def lanceRequete(query, params=(), fetch=False, fetchone=False, debug=False, many=False, insert=False):

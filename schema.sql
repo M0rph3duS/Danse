@@ -148,5 +148,8 @@ CREATE TABLE inscription_cours (
     UNIQUE(cours_id, user_id)
 );
 
+CREATE UNIQUE INDEX unique_inscription
+ON inscription_cours(user_id, cours_id);
+
 CREATE INDEX idx_cours_saison ON cours(saison);
 CREATE INDEX idx_cours_prof_saison ON cours_prof(saison);
