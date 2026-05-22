@@ -1,13 +1,15 @@
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS salle;
+DROP TABLE IF EXISTS danse;
 DROP TABLE IF EXISTS prof;
 DROP TABLE IF EXISTS niveau;
 DROP TABLE IF EXISTS info_ecole;
-DROP TABLE IF EXISTS danse;
-DROP TABLE IF EXISTS info_ecole;
+DROP TABLE IF EXISTS cours;
+DROP TABLE IF EXISTS cours_prof;
 DROP TABLE IF EXISTS inscription_cours;
 
 
+    -- Tables --
 
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,45 +56,27 @@ CREATE TABLE users (
 
     UNIQUE(nom, prenom, email)
 );
-
--- -------------------------
--- Table Salle
--- -------------------------
 CREATE TABLE salle (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nom TEXT NOT NULL UNIQUE,
     description TEXT DEFAULT '' 
 );
-
--- -------------------------
--- Table Danse
--- -------------------------
 CREATE TABLE danse (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nom TEXT NOT NULL UNIQUE,
     couleur VARCHAR(7) DEFAULT '#FFFFFF',  -- code hex de la couleur (#RRGGBB)
     description TEXT DEFAULT ''
 );
--- -------------------------
--- Table Prof
--- -------------------------
 CREATE TABLE prof (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nom TEXT NOT NULL,
     description TEXT DEFAULT ''
 );
-
--- -------------------------
--- Table Niveau
--- -------------------------
 CREATE TABLE niveau (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nom TEXT NOT NULL UNIQUE,
     description TEXT DEFAULT ''
 );
--- -------------------------
--- Table Info École
--- -------------------------
 CREATE TABLE info_ecole (
     nom TEXT NOT NULL,
     adresse TEXT,
@@ -102,9 +86,9 @@ CREATE TABLE info_ecole (
     heure_debut_planning TEXT,
     heure_fin_planning TEXT,
     jour_debut_planning TEXT,
-    jour_fin_planning TEXT  
+    jour_fin_planning TEXT,
+    verrou_planning INTEGER DEFAULT 0  
 );
-
 CREATE TABLE cours (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
 
@@ -122,7 +106,6 @@ CREATE TABLE cours (
     FOREIGN KEY (niveau_id) REFERENCES niveau(id),
     FOREIGN KEY (salle_id) REFERENCES salle(id)
 );
-
 CREATE TABLE cours_prof (
     cours_id INTEGER,
     prof_id INTEGER,
@@ -133,7 +116,6 @@ CREATE TABLE cours_prof (
     FOREIGN KEY (cours_id) REFERENCES cours(id) ON DELETE CASCADE,
     FOREIGN KEY (prof_id) REFERENCES prof(id)
 );
-
 CREATE TABLE inscription_cours (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cours_id INTEGER NOT NULL,
@@ -148,8 +130,14 @@ CREATE TABLE inscription_cours (
     UNIQUE(cours_id, user_id)
 );
 
+    -- Index --
 CREATE UNIQUE INDEX unique_inscription
 ON inscription_cours(user_id, cours_id);
 
 CREATE INDEX idx_cours_saison ON cours(saison);
 CREATE INDEX idx_cours_prof_saison ON cours_prof(saison);
+
+    -- Informations écoles standart --
+INSERT INTO info_ecole VALUES ("Range Runner Team","5 rue Offenbach","Aix les Bains","0617263416","73100","8:00","23:00","Lundi","Dimanche",0);
+
+

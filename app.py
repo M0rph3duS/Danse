@@ -8,10 +8,16 @@
 
 """
 
-permettre le choix du cours et l'inscription depuis une modale planning
+dans l'export, actuellement ça part depuis le treeview, faire en sorte que ça exporte le select * from users avec le where qui va bien
 
-mettre un carré flottant sur le planning avec description en mouseover
+faire une fonction qui calcule automatiquement les jours de la semaine ou il y a cours, depuis le mois de septembre jusqu'au fin juin 
+de l'année suivante, permettra de faire des cases a cocher pour plus tard et de valider les fiches de présence
 
+faire une vue par cours avec tous les inscrit et tous les niveaux, avec des etiquettes
+séparer couples et solo
+
+
+ 
 """
 #    .....     .                                                                  s    
 #  .d88888Neu. 'L                                                                :8    
@@ -31,10 +37,12 @@ mettre un carré flottant sur le planning avec description en mouseover
 
 import sqlite3
 import tkinter as tk
-from tkinter import ttk,messagebox,colorchooser
+from tkinter import ttk,messagebox,colorchooser,filedialog
+import unicodedata
 import re
 from datetime import datetime
-from typing import ReadOnly
+import csv
+
 
 
 
@@ -217,11 +225,10 @@ class StartPage(BasePage):
 
         # --- Boutons Gestion des Cours ---
         self.btPlanning = tk.Button(gestion_cours, text="Planning", 
-                  command=lambda: controller.show_frame("PlanningPage"),underline=0)
+                  command=lambda: self.open_planning(),underline=0)
         self.btPlanning.pack(fill="x", pady=5)
         self.ajoutCours = tk.Button(gestion_cours, text="Ajout de cours", 
-                  command=lambda: controller.show_frame("AddCoursPage"),underline=9)
-        self.ajoutCours.pack(fill="x", pady=5)
+                command=lambda: controller.show_frame("AddCoursPage"),underline=9)
 
         # --- Boutons Gestion de l'École ---
         self.btGestionBdd = tk.Button(gestion_ecole, text="Gestion Base de données", 
@@ -235,7 +242,7 @@ class StartPage(BasePage):
             "<Alt-a>": lambda e: controller.show_frame("AddUserPage"),
             "<Alt-m>": lambda e: controller.show_frame("GestionEcolePage"),
             "<Alt-c>": lambda e: controller.show_frame("AddCoursPage"),
-            "<Alt-p>": lambda e: controller.show_frame("PlanningPage"),
+            "<Alt-p>": lambda e: self.open_planning(),
             "<Alt-r>": lambda e: self.open_search()
         })
 
@@ -262,9 +269,26 @@ class StartPage(BasePage):
             self.btParameters,
         )
 
+        # --- Possibilité d'ajouter des cours ---
+        if not lanceRequete("SELECT verrou_planning from info_ecole",fetchone=True)[0]:
+            self.ajoutCours.pack(fill="x", pady=5)
+        else:
+            self.ajoutCours.pack_forget()
+
+
         # configure Tab/Shift+Tab
         self.setup_tab_navigation()
 
+    def open_planning(self):
+        """
+        Vérification dans la base de donnée avant ouverture du planning
+        """
+
+        if not verifier_tables_requises():
+            return 
+        else:
+            self.controller.show_frame("PlanningPage")
+    
 ########################
 ### Gestion Planning ###
 ########################
@@ -292,6 +316,9 @@ class PlanningPage(BasePage):
         # Permettre de déplacer les cases
         self.drag_enabled = drag_enabled
 
+        # Verification si modifications possibles
+        self.verrou = lanceRequete("SELECT verrou_planning from info_ecole",fetchone=True)[0]
+
         self.drag_data = {
             "cours_id": None,
             "rect": None,
@@ -299,6 +326,12 @@ class PlanningPage(BasePage):
             "start_y": 0
         }
         
+        # --- Gestion tooltips mouseover ---
+        self.hover_after_id = None
+        self.tooltip = None
+        self.tooltip_text = None
+        self.hovered_cours_id = None
+
         # --- Header ---
         header_frame = tk.Frame(self)
         header_frame.pack(fill="x", pady=10)
@@ -376,13 +409,15 @@ class PlanningPage(BasePage):
     def on_show(self):
         self.salles = self.get_salles()
         self.first_hour, self.last_hour = self.get_time_bounds()
+        # Verification si modifications possibles
+        self.verrou = lanceRequete("SELECT verrou_planning from info_ecole",fetchone=True)[0]
+
         self.redraw_canvas()
         self.draw_courses()
 
     def close(self):
         self.controller.show_frame("StartPage")
         
-
     # ------------------------
     # Récupérer le nombre de salles
     # ------------------------
@@ -421,9 +456,7 @@ class PlanningPage(BasePage):
             ORDER BY c.jour, c.heure_debut, c.salle_id
         """
         rows = lanceRequete(query, fetch=True)
-        print(self.cb_saison.get())
         return rows
-
 
     # ------------------------
     # Récupérer salles
@@ -507,6 +540,7 @@ class PlanningPage(BasePage):
 
     def on_key_down(self, event):
         self.change_saison(1)
+
     def get_cours_duration(self, cours_id):
         query = "SELECT heure_debut, heure_fin FROM cours WHERE id = ?"
         row = lanceRequete(query, (cours_id,), fetchone=True)
@@ -608,6 +642,9 @@ class PlanningPage(BasePage):
 
     def on_drag_start(self, event):
         if not self.drag_enabled:
+            return
+        
+        if self.verrou:
             return
         # trouver l'item cliqué
         item = self.canvas.find_closest(event.x, event.y)[0]
@@ -735,6 +772,7 @@ class PlanningPage(BasePage):
     # double click sur canvas pour add un cours
     # ------------------------
     def on_canvas_double_click(self, event):
+
         # Vérifie si on a cliqué sur un item existant
         clicked_items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
 
@@ -743,6 +781,11 @@ class PlanningPage(BasePage):
 
         if clicked_items:
             return
+
+
+        if self.verrou:
+            return messagebox.showerror("Erreur", "Modifications du planning désactivé ! \n\nAller dans paramètres de l'école pour l'activer.")
+            
         x, y = event.x, event.y
 
         # -------------------
@@ -785,6 +828,177 @@ class PlanningPage(BasePage):
         # ouvrir modale d'ajout
         # -------------------
         AddCoursModal(self, jour, salle_id, heure_debut)
+
+    # ------------------------
+    # gestion de la tooltip des cours
+    # ------------------------
+    def on_hover_enter(self, event, cours_id):
+        # si on change de cours → reset tooltip
+        if self.hovered_cours_id != cours_id:
+            self.hide_tooltip()
+
+        self.hovered_cours_id = cours_id
+
+        self.hover_x = event.x
+        self.hover_y = event.y
+
+        # annule ancien timer
+        if self.hover_after_id:
+            self.after_cancel(self.hover_after_id)
+            self.hover_after_id = None
+
+        # relance timer propre
+        self.hover_after_id = self.after(500, lambda: self.show_tooltip(cours_id))
+
+    def on_hover_leave(self, event):
+        # on attend un peu pour voir si on reste sur le même cours
+        if self.hover_after_id:
+            self.after_cancel(self.hover_after_id)
+
+        self.hover_after_id = self.after(50, self._real_leave_check)
+
+    def _real_leave_check(self):
+        # position souris RELATIVE au canvas
+        x = self.canvas.winfo_pointerx() - self.canvas.winfo_rootx()
+        y = self.canvas.winfo_pointery() - self.canvas.winfo_rooty()
+
+        items = self.canvas.find_overlapping(x, y, x, y)
+
+        for item in items:
+            tags = self.canvas.gettags(item)
+
+            # si on est encore sur un cours → ne rien faire
+            if any(tag.startswith("cours_") for tag in tags):
+                return
+
+            # si on est sur tooltip → ne rien faire
+            if "tooltip" in tags:
+                return
+
+        # sinon vrai leave
+        self.hovered_cours_id = None
+        self.hide_tooltip()
+
+    def on_hover_motion(self, event):
+        self.hover_x = event.x
+        self.hover_y = event.y
+
+        if self.tooltip:
+            width = self.tooltip_width
+            height = self.tooltip_height 
+
+            x = event.x + 15
+            y = event.y + 15
+
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+
+            if x + width > canvas_width:
+                x = event.x - width - 15
+
+            if y + height > canvas_height:
+                y = event.y - height - 15
+
+            self.canvas.coords(self.tooltip, x, y, x + width, y + height)
+            self.canvas.coords(self.tooltip_text, x + 5, y + 5)
+            
+    def show_tooltip(self, cours_id):
+        # si entre temps on a changé de cours → STOP
+        if self.hovered_cours_id != cours_id:
+            return
+
+        # supprime ancien tooltip si existe
+        self.hide_tooltip()
+        try:
+            # -----------------------
+            # compter Leader / Follower
+            # -----------------------
+            query_count = """
+                SELECT 
+                    COUNT(CASE WHEN role = 'Leader' THEN 1 END),
+                    COUNT(CASE WHEN role = 'Follower' THEN 1 END)
+                FROM inscription_cours
+                WHERE cours_id = ?
+            """
+            result = lanceRequete(query_count, (cours_id,), fetchone=True)
+
+            leaders = result[0] if result and result[0] else 0
+            followers = result[1] if result and result[1] else 0
+
+            # -----------------------
+            # récupérer commentaire
+            # -----------------------
+            query_comment = "SELECT commentaires FROM cours WHERE id = ?"
+            result_comment = lanceRequete(query_comment, (cours_id,), fetchone=True)
+
+            commentaire = result_comment[0] if result_comment and result_comment[0] else ""
+
+        except Exception as e:
+            leaders, followers = 0, 0
+            commentaire = ""
+
+        # -----------------------
+        # construire le texte
+        # -----------------------
+        texte = f"Leader : {leaders}\nFollower : {followers}"
+
+        if commentaire.strip():
+            texte += f"\n\n{commentaire}"
+
+        # -----------------------
+        # taille dynamique
+        # -----------------------
+        lines = texte.count("\n") + 1
+        width = 200
+        height = 20 + (lines * 15)
+
+        self.tooltip_width = width
+        self.tooltip_height = height
+
+        # position de base
+        x = self.hover_x + 15
+        y = self.hover_y + 15
+
+        # dimensions du canvas
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+
+        # -----------------------
+        # correction bord droit
+        # -----------------------
+        if x + width > canvas_width:
+            x = self.hover_x - width - 15  # passe à gauche
+
+        # -----------------------
+        # correction bord bas
+        # -----------------------
+        if y + height > canvas_height:
+            y = self.hover_y - height - 15  # passe au-dessus
+
+        # -----------------------
+        # dessin tooltip
+        # -----------------------
+        self.tooltip = self.canvas.create_rectangle(
+            x, y, x + width, y + height,
+            fill="white",
+            outline="black",
+            tags=("tooltip",)
+        )
+
+        self.tooltip_text = self.canvas.create_text(
+            x + 5, y + 5,
+            anchor="nw",
+            text=texte,
+            font=("Arial", 8),
+            width=width - 10,  # wrap auto
+            tags=("tooltip",)
+        )
+        
+    def hide_tooltip(self):
+        if self.tooltip:
+            self.canvas.delete("tooltip")
+            self.tooltip = None
+            self.tooltip_text = None
 
     # ------------------------
     # Redessine le canvas
@@ -946,7 +1160,7 @@ class PlanningPage(BasePage):
                 fill=danse_couleur or "#FFFFFF",
                 outline=outline_color,
                 width=outline_width,
-                tags=("cours_rect",)  # ✅ IMPORTANT
+                tags=(f"cours_{cours_id}", "cours_rect")
             )
 
             text = f"{danse_nom}\n{niveau_nom}\n{profs or ''}"
@@ -958,7 +1172,7 @@ class PlanningPage(BasePage):
                 anchor="c",
                 justify="center",
                 width=salle_width - 6,
-                tags=("cours_rect",)  # ✅ IMPORTANT
+                tags=(f"cours_{cours_id}", "cours_rect")
             )
 
             # stocker dans dictionnaire
@@ -981,9 +1195,16 @@ class PlanningPage(BasePage):
             self.canvas.tag_bind(rect, "<ButtonRelease-1>", self.on_drag_stop)
             self.canvas.tag_bind(text_id, "<ButtonRelease-1>", self.on_drag_stop)
 
+            tag = f"cours_{cours_id}"
+
+            self.canvas.tag_bind(tag, "<Enter>", lambda e, cid=cours_id: self.on_hover_enter(e, cid))
+            self.canvas.tag_bind(tag, "<Leave>", self.on_hover_leave)
+
+            self.canvas.tag_bind(rect, "<Motion>", self.on_hover_motion)
+            self.canvas.tag_bind(text_id, "<Motion>", self.on_hover_motion)
+
         # ⚠️ bind à faire UNE seule fois (pas dans la boucle)
         self.canvas.bind("<Double-Button-1>", self.on_canvas_double_click)
-
 
 class AddCoursModal(tk.Toplevel):
     """
@@ -1125,7 +1346,6 @@ class AddCoursModal(tk.Toplevel):
             return messagebox.showerror("Erreur", "Profs pas disponibles sur ce créneau.")
 
         ajoutCours(danse_id, niveau_id, salle_id, jour, debut, fin, saison, prof_ids)
-        messagebox.showinfo("OK", "Cours ajouté")
         # --- Redessiner le canvas pour voir le cours immédiatement ---
         if hasattr(self.parent, "draw_courses"):
             self.parent.draw_courses()
@@ -1212,27 +1432,32 @@ class EditCoursModal(tk.Toplevel):
         self.txt_commentaire.pack(fill="x", expand=True)
 
         # --- Boutons bas ---
+
+            
         button_frame = tk.Frame(self)
         button_frame.pack(pady=10, fill="x")
-        self.bt_modifier = tk.Button(button_frame, text="Modifier", command=self.modify_cours,underline=0)
         self.bt_afficher = tk.Button(button_frame, text="Afficher la liste des inscrits", command=self.afficher_inscrits,underline=0)
-        self.bt_supprimer = tk.Button(button_frame, text="Supprimer le cours", command=self.supprimer_cours,underline=0)
         self.bt_retour = tk.Button(button_frame, text="Retour", command=self.destroy,underline=0)
-        self.bt_modifier.pack(side="left", padx=5, expand=True)
         self.bt_afficher.pack(side="left", padx=5, expand=True)
-        self.bt_supprimer.pack(side="left", padx=5, expand=True)
         self.bt_retour.pack(side="left", padx=5, expand=True)
 
+        # --- Mode edition possible ou pas ---
+        if not self.parent.verrou:
+            self.bt_modifier = tk.Button(button_frame, text="Modifier", command=self.modify_cours,underline=0)
+            self.bt_supprimer = tk.Button(button_frame, text="Supprimer le cours", command=self.supprimer_cours,underline=0)
+            self.bt_modifier.pack(side="left", padx=5, expand=True)
+            self.bt_supprimer.pack(side="left", padx=5, expand=True)
+            self.bind("<Alt-s>", lambda e: self.supprimer_cours())
+            self.bind("<Alt-m>", lambda e: self.modify_cours())
+            
 
 
         # --- Charge les données du cours ---
         self.load_cours_info()
 
-        # Raccourci fermeture
+        # Binds
         self.bind("<Escape>", lambda e: self.destroy())
         self.bind("<Alt-a>", lambda e: self.afficher_inscrits())
-        self.bind("<Alt-m>", lambda e: self.modify_cours())
-        self.bind("<Alt-s>", lambda e: self.supprimer_cours())
         self.bind("<Alt-r>", lambda e: self.destroy())
     
     # ------------------------
@@ -1297,6 +1522,7 @@ class EditCoursModal(tk.Toplevel):
         """
         Bouton Modifier : met à jour le cours existant avec les mêmes vérifications que AddCours
         """
+
         danse_id = self.cb_danse._mapping.get(self.cb_danse.get())
         niveau_id = self.cb_niveau._mapping.get(self.cb_niveau.get())
         salle_id = self.cb_salle._mapping.get(self.cb_salle.get())
@@ -1368,28 +1594,68 @@ class EditCoursModal(tk.Toplevel):
         # à compléter : ouvrir pop-up liste inscrits
 
     def supprimer_cours(self):
-        confirm = messagebox.askyesno(
-            "Confirmation",
-            "Es-tu sûr de vouloir supprimer ce cours ?", parent=self
-        )
-        if not confirm:
-            return
-
         try:
-            # Supprimer les relations profs
-            query1 = "DELETE FROM cours_prof WHERE cours_id = ?"
-            lanceRequete(query1, (self.cours_id,))
+            # 1️⃣ Compter les inscrits
+            query_count = """
+                SELECT COUNT(*)
+                FROM inscription_cours
+                WHERE cours_id = ?
+            """
+            count = lanceRequete(query_count, (self.cours_id,), fetchone=True)[0]
 
-            # Supprimer le cours
-            query2 = "DELETE FROM cours WHERE id = ?"
-            lanceRequete(query2, (self.cours_id,))
+            # 2️⃣ Message adapté
+            if count > 0:
+                message = f"Personnes inscrites à ce cours : {count}\n\nLa suppression supprimera aussi toutes les inscriptions.\n\nContinuer ?"
+            else:
+                message = "Es-tu sûr de vouloir supprimer ce cours ?"
 
-            messagebox.showinfo("Succès", "Cours supprimé avec succès", parent=self)
+            confirm = messagebox.askyesno("Confirmation", message, parent=self)
+            if not confirm:
+                return
 
-            self.fin()
+            # 3️⃣ Suppression transactionnelle
+            conn = sqlite3.connect("db.sqlite")
+            cur = conn.cursor()
+
+            try:
+                # 🔥 supprimer inscriptions AVANT (important)
+                cur.execute(
+                    "DELETE FROM inscription_cours WHERE cours_id = ?",
+                    (self.cours_id,)
+                )
+
+                # supprimer relations profs
+                cur.execute(
+                    "DELETE FROM cours_prof WHERE cours_id = ?",
+                    (self.cours_id,)
+                )
+
+                # supprimer cours
+                cur.execute(
+                    "DELETE FROM cours WHERE id = ?",
+                    (self.cours_id,)
+                )
+
+                conn.commit()
+                self.fin()
+
+            except Exception as e:
+                conn.rollback()
+                messagebox.showerror(
+                    "Erreur",
+                    f"Erreur lors de la suppression : {e}",
+                    parent=self
+                )
+
+            finally:
+                conn.close()
 
         except Exception as e:
-            messagebox.showerror("Erreur", f"Erreur lors de la suppression : {e}", parent=self)
+            messagebox.showerror(
+                "Erreur",
+                f"Erreur lors de la vérification : {e}",
+                parent=self
+            )
 
 
 
@@ -1597,7 +1863,6 @@ class AddCoursPage(BasePage):
 
         prof_ids = [self.AddCours_lb_prof._mapping[i] for i in selected_indices_prof]
 
-        print("Profs sélectionnés :", prof_ids)
         if len(selected_indices_prof) > 2:
             reponse =  messagebox.askyesno("Attention !", "Vous avez selectionné plus de 2 professeurs, êtes vous sur ?")
 
@@ -1671,6 +1936,13 @@ class AddCoursPage(BasePage):
     # On show
     # ------------------------
     def on_show(self):
+
+        if lanceRequete("SELECT verrou_planning from info_ecole",fetchone=True)[0]:
+            messagebox.showerror("Erreur", "Alors ça c'est beau, utiliser un raccourcis clavier d'un bouton qui n'est plus présent.. Respect a toi ! Manque de chance la création de cours est désactivée. Check les paramètres de l'école pour changer ça ;)")
+            self.controller.show_frame("StartPage")
+            # self.parent.geometry("800x250+0+0")
+            return
+
         self.clear_fields()
         self.load_data()
         self.AddCours_cb_danse.focus_set()
@@ -1904,7 +2176,7 @@ class EditUserPage(BasePage):
     def __init__(self, parent, controller):
         super().__init__(parent, controller)
 
-
+        self.cours_ids = []  # pour stocker les id des cours pour suppression sur double click
         # --- Titre ---
         self.frameTitle = tk.Label(self, text="Mise à jour adhérent", 
                  font=("Arial", 18, "bold"))
@@ -2009,13 +2281,13 @@ class EditUserPage(BasePage):
         self.cancel_couple.bind("<Button-1>", lambda e: self.divorce())
 
         # --- Cadres Commentaires / Règlements ---
-        editUser_cours_frame = tk.LabelFrame(self, text="Cours", padx=10, pady=10,width=50)
-        editUser_comment_frame = tk.LabelFrame(self, text="Commentaire", padx=10, pady=10,width=50)
+        editUser_cours_frame = tk.LabelFrame(self, text="Cours", padx=10, pady=10)
+        editUser_comment_frame = tk.LabelFrame(self, text="Commentaire", padx=10, pady=10)
         editUser_payment_frame = tk.LabelFrame(self, text="Règlements", padx=10, pady=10)
 
         editUser_payment_frame.grid(row=3, column=1, rowspan=2 ,sticky="nsew", padx=(10,20), pady=10)
-        editUser_cours_frame.grid(row=3, column=0, sticky="nsw", padx=(20,10), pady=10)
-        editUser_comment_frame.grid(row=4, column=0, sticky="nsw", padx=(20,10), pady=10)
+        editUser_cours_frame.grid(row=3, column=0, sticky="nsew", padx=(20,10), pady=10)
+        editUser_comment_frame.grid(row=4, column=0, sticky="nsew", padx=(20,10), pady=10)
 
         self.editUser_commentaire = tk.Text(editUser_comment_frame, height=4, wrap="word",width=50)
         self.editUser_commentaire.grid(row=0, column=0, sticky="new")
@@ -2043,13 +2315,21 @@ class EditUserPage(BasePage):
 
         editUser_payment_frame.columnconfigure(1, weight=1)
 
+        # Bouton
         self.add_course_btn = tk.Button(
             editUser_cours_frame,
             text="Ajouter un cours",
             command=lambda: self.open_planning_modal(self.user_id),
             underline=11
         )
-        self.add_course_btn.grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        self.add_course_btn.grid(row=0, column=0, sticky="nw", padx=5, pady=5)
+
+        # Liste des cours
+        self.cours_listbox = tk.Listbox(editUser_cours_frame, height=5, width=40)
+        self.cours_listbox.grid(row=0, column=1, sticky="nsew", padx=10, pady=5)
+        self.cours_listbox.bind("<Double-Button-1>", self.on_double_click_course)
+        
+        editUser_cours_frame.columnconfigure(1, weight=1)
 
         # --- Boutons ---
         button_frame = tk.Frame(self)
@@ -2101,18 +2381,72 @@ class EditUserPage(BasePage):
         # configure Tab/Shift+Tab
         self.setup_tab_navigation()
 
+    def on_double_click_course(self, event):
+        selection = self.cours_listbox.curselection()
+        if not selection:
+            return
+
+        index = selection[0]
+        cours_id = self.cours_ids[index]
+
+        gerer_inscription_cours(
+            parent=self,
+            controller=self.controller,
+            user_id=self.user_id,
+            cours_id=cours_id,
+            refresh_callback=self.load_user_courses
+        )
+
+    def load_user_courses(self):
+        self.cours_listbox.delete(0, tk.END)
+        self.cours_ids = []
+
+        query = """
+            SELECT 
+                c.id,
+                c.jour,
+                c.heure_debut,
+                d.nom,
+                n.nom
+            FROM inscription_cours ic
+            JOIN cours c ON ic.cours_id = c.id
+            JOIN danse d ON c.danse_id = d.id
+            JOIN niveau n ON c.niveau_id = n.id
+            WHERE ic.user_id = ?
+            ORDER BY 
+                CASE c.jour
+                    WHEN 'Lundi' THEN 1
+                    WHEN 'Mardi' THEN 2
+                    WHEN 'Mercredi' THEN 3
+                    WHEN 'Jeudi' THEN 4
+                    WHEN 'Vendredi' THEN 5
+                    WHEN 'Samedi' THEN 6
+                    WHEN 'Dimanche' THEN 7
+                END,
+                c.heure_debut
+        """
+
+        rows = lanceRequete(query, (self.user_id,), fetch=True)
+
+        for row in rows:
+            cours_id, jour, heure, danse, niveau = row
+
+            self.cours_ids.append(cours_id)  # 🔥 important
+
+            texte = f"{jour} {heure} - {danse} ({niveau})"
+            self.cours_listbox.insert(tk.END, texte)
+
     def open_planning_modal(self,id_user):
+
+        if not verifier_tables_requises():
+            return 
         win = PlanningModal(self, self.controller, id_user)
         self.wait_window(win) 
         self.set_data(id_user)
-        print('plop')
-        
-
+        self.load_user_courses()
 
     def update_process(self):
         self.update()
-
-        messagebox.showinfo("OK", "Adhérent modifié")
 
         self.clear_fields()
         self.controller.show_frame("StartPage") 
@@ -2253,6 +2587,8 @@ class EditUserPage(BasePage):
         else:
             self.modifier_bouton_couple_séparé()
 
+        self.load_user_courses()
+
     def accoupler(self):
         
         # Si pas de partenaire, création d'un couple
@@ -2277,7 +2613,6 @@ class EditUserPage(BasePage):
                     )
 
                     if reponse:
-                        print("modification")
                         modifier_role_sql(partner_id)
 
                 self.modifier_bouton_couple_ensemble(partner_id)
@@ -2359,80 +2694,16 @@ class PlanningModal(tk.Toplevel):
 
 
     def on_click_cours(self, cours_id):
-        user_id = self.id_user
-
-        # 1️⃣ Vérifier si l'utilisateur est inscrit
-        query_user = """
-            SELECT id
-            FROM inscription_cours
-            WHERE cours_id = ? AND user_id = ?
-        """
-        inscription_user = lanceRequete(query_user, (cours_id, user_id), fetchone=True)
-
-        if not inscription_user:
-            # L'utilisateur n'est pas inscrit → on peut ouvrir l'EditInscriptionModal normale
-            modal = EditInscriptionModal(
-                parent=self,
-                controller=self.controller,
-                id_user=user_id,
-                id_cours=cours_id
-            )
-            self.wait_window(modal)
-            self.grab_set()
-            self.focus_force()
-            self.planning.draw_courses()
-            return
-
-        # 2️⃣ L'utilisateur est déjà inscrit → demander désinscription
-        desinscrire = messagebox.askyesno("Désinscription", "Voulez-vous vous désinscrire ?")
-        if not desinscrire:
-            return
-
-        # 3️⃣ Vérifier si le partenaire est inscrit
-        # récupérer le partenaire
-        query_partner_info = """SELECT u2.id, u2.prenom
-                                FROM users u1
-                                JOIN users u2 ON u1.partner_id = u2.id
-                                WHERE u1.id = ?"""
-        partner_row = lanceRequete(query_partner_info, (user_id,), fetchone=True)
-        partenaire_id = partner_row[0] if partner_row else None
-        partenaire_prenom = partner_row[1] if partner_row else None
-
-        inscription_partner = None
-        if partenaire_id:
-            query_partner = """
-                SELECT id
-                FROM inscription_cours
-                WHERE cours_id = ? AND user_id = ?
-            """
-            inscription_partner = lanceRequete(query_partner, (cours_id, partenaire_id), fetchone=True)
-
-        # 4️⃣ Supprimer l'inscription de l'utilisateur
-        try:
-            conn = sqlite3.connect("db.sqlite")
-            cur = conn.cursor()
-
-            cur.execute("DELETE FROM inscription_cours WHERE id = ?", (inscription_user[0],))
-
-            # 5️⃣ Demander si on veut désinscrire le partenaire si présent
-            if inscription_partner:
-                desinscrire_partner = messagebox.askyesno(
-                    "Désinscription partenaire",
-                    f"Son conjoint {partenaire_prenom} est également inscrit. Voulez-vous le désinscrire ?"
-                )
-                if desinscrire_partner:
-                    cur.execute("DELETE FROM inscription_cours WHERE id = ?", (inscription_partner[0],))
-
-            conn.commit()
-            self.planning.draw_courses()
-
-        except Exception as e:
-            conn.rollback()
-            messagebox.showerror("Erreur", str(e))
-        finally:
-            conn.close()
-
-            
+        gerer_inscription_cours(
+            parent=self,
+            controller=self.controller,
+            user_id=self.id_user,
+            cours_id=cours_id,
+            refresh_callback=self.planning.draw_courses
+        )
+        self.grab_set()
+        self.focus_force()
+        
 class EditInscriptionModal(tk.Toplevel):
     def __init__(self, parent, controller, id_user, id_cours):
         super().__init__(parent)
@@ -2462,6 +2733,9 @@ class EditInscriptionModal(tk.Toplevel):
     # Build widgets
     # ----------------------
     def build_widgets(self):
+
+        notebook = None
+
         # --- Récapitulatif cours ---
         recap_frame = tk.Frame(self)
         recap_frame.pack(pady=10, fill="x")
@@ -2513,7 +2787,7 @@ class EditInscriptionModal(tk.Toplevel):
         # --- Boutons ---
         btn_frame = tk.Frame(self)
         btn_frame.pack(pady=15)
-        tk.Button(btn_frame, text="Inscrire", width=12, command=self.inscrire).pack(padx=10)
+        tk.Button(btn_frame, text="Inscrire", width=12, command=self.inscrire,underline=0).pack(padx=10)
         tk.Button(btn_frame, text="Retour", width=12, command=self.destroy,underline=0).pack(padx=10)
 
         self.notebook = notebook
@@ -2716,9 +2990,9 @@ class GestionEcolePage(BasePage):
             font=("Arial", 18, "bold")
         ).grid(row=0, column=0, columnspan=2, pady=(20))
 
-    ###################
-    ### Frame Danse ###
-    ###################
+        ###################
+        ### Frame Danse ###
+        ###################
         danse_frame = tk.LabelFrame(
             self,
             text="Gestion des danses",
@@ -2771,9 +3045,9 @@ class GestionEcolePage(BasePage):
         # Double clic
         self.list_danse.bind("<Double-Button-1>", lambda event: self.open_edit(event, self.list_danse, "danse"))
 
-    ###################
-    ### Frame niveau ###
-    ###################
+        ####################
+        ### Frame niveau ###
+        ####################
         niveau_frame = tk.LabelFrame(
             self,
             text="Gestion des niveaux",
@@ -2826,9 +3100,9 @@ class GestionEcolePage(BasePage):
         # Double clic
         self.list_niveau.bind("<Double-Button-1>", lambda event: self.open_edit(event, self.list_niveau, "niveau"))
 
-    ###################
-    ### Frame prof ###
-    ###################
+        ###################
+        ### Frame prof ###
+        ###################
         prof_frame = tk.LabelFrame(
             self,
             text="Gestion des profs",
@@ -2881,9 +3155,9 @@ class GestionEcolePage(BasePage):
         # Double clic
         self.list_prof.bind("<Double-Button-1>", lambda event: self.open_edit(event, self.list_prof, "prof"))
 
-    ###################
-    ### Frame salle ###
-    ###################
+        ###################
+        ### Frame salle ###
+        ###################
         salle_frame = tk.LabelFrame(
             self,
             text="Gestion des salles",
@@ -2937,20 +3211,102 @@ class GestionEcolePage(BasePage):
         self.list_salle.bind("<Double-Button-1>", lambda event: self.open_edit(event, self.list_salle, "salle"))
 
 
+        ##########################
+        ### Frame Informations ###
+        ##########################
+
+        info_frame = tk.LabelFrame(
+            self,
+            text="Informations École",
+            padx=10,
+            pady=10
+        )
+        info_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=10, sticky="nsew")
+
+        # =========================
+        # LEFT SIDE
+        # =========================
+        left_info = tk.Frame(info_frame)
+        left_info.grid(row=0, column=0, padx=20, pady=10, sticky="n")
+
+        tk.Label(left_info, text="Nom").grid(row=0, column=0, sticky="w")
+        self.entry_ecole_nom = tk.Entry(left_info, width=25)
+        self.entry_ecole_nom.grid(row=1, column=0, pady=(0, 10))
+
+        tk.Label(left_info, text="Téléphone").grid(row=2, column=0, sticky="w")
+        self.entry_ecole_tel = tk.Entry(left_info, width=25)
+        self.entry_ecole_tel.grid(row=3, column=0, pady=(0, 10))
+
+        self.var_verrou = tk.IntVar()
+        self.cb_verrou = tk.Checkbutton(
+            left_info,
+            text="Verrouiller planning",
+            variable=self.var_verrou
+        )
+        self.cb_verrou.grid(row=4, column=0, pady=(10, 0), sticky="w")
+
+        left_info.columnconfigure(0, weight=1)
+        left_info.columnconfigure(1, weight=1)
+
+        # =========================
+        # RIGHT SIDE
+        # =========================
+        right_info = tk.Frame(info_frame)
+        right_info.grid(row=0, column=1, padx=20, pady=10, sticky="n")
+
+        tk.Label(right_info, text="Adresse").grid(row=0, column=0, sticky="new")
+        self.entry_ecole_adresse = tk.Entry(right_info, width=30)
+        self.entry_ecole_adresse.grid(row=0, column=1, pady=(0, 10), sticky="new")
+
+        tk.Label(right_info, text="Code postal").grid(row=1, column=0, sticky="new")
+        self.entry_ecole_cp = tk.Entry(right_info, width=15)
+        self.entry_ecole_cp.grid(row=1, column=1, pady=(0, 10), sticky="new")
+
+        tk.Label(right_info, text="Ville").grid(row=2, column=0, sticky="new")
+        self.entry_ecole_ville = tk.Entry(right_info, width=25)
+        self.entry_ecole_ville.grid(row=2, column=1, pady=(0, 10), sticky="new")
+
+        right_info.columnconfigure(0, weight=1)
+        right_info.columnconfigure(1, weight=1)
+
         ################
         #### Boutons ###
         ################
+        button_frame = tk.Frame(self)
+        button_frame.grid(row=4, column=0, columnspan=2, sticky="ew", padx=20, pady=10)
+
+        button_frame.columnconfigure(0, weight=1)
+        button_frame.columnconfigure(1, weight=1)
+        button_frame.columnconfigure(2, weight=1)
+
+
 
         tk.Button(
-            self,
+            button_frame,
             text="Reset base",
             command=self.reset_database,
             bg="red",
             fg="white"
-        ).grid(row=99, column=0, pady=20)
+        ).grid(row=0, column=0, pady=20)
 
-        self.btRetour = tk.Button(self, text="Retour", command=lambda: controller.show_frame("StartPage"),underline=0)
-        self.btRetour.grid(row=99,column=1, sticky="w", padx=5)
+        self.btRetour = tk.Button(
+            button_frame,
+            text="Sauvegarder et Revenir",
+            command=self.save_and_return,
+            underline=0
+        )
+        self.btRetour.grid(row=0, column=1, padx=5)
+
+        tk.Button(
+            button_frame,
+            text="Retour",
+            command=self.destroy,
+            underline=0
+        ).grid(row=0, column=2, pady=20)
+
+        ####################
+        #### Parametrage ###
+        ####################
 
         danse_frame.columnconfigure(1, weight=1)
         niveau_frame.columnconfigure(1, weight=1)
@@ -2959,7 +3315,8 @@ class GestionEcolePage(BasePage):
 
         # Gestion des binds
         self.bind_shortcuts({
-            "<Alt-r>": lambda e: self.controller.show_frame("StartPage")
+            "<Alt-r>": lambda e: self.controller.show_frame("StartPage"),
+            "<Alt-s>": lambda e: self.save_and_return()
         })
         self.entry_danse.bind("<Return>", lambda event: self.add_item("danse", self.entry_danse, self.list_danse))
         self.entry_salle.bind("<Return>", lambda event: self.add_item("salle", self.entry_salle, self.list_salle))
@@ -2984,8 +3341,31 @@ class GestionEcolePage(BasePage):
         else:
             return "#FFFFFF"
             
+    def load_info_ecole(self):
+        result = lanceRequete("SELECT nom, adresse, ville, telephone, code_postal, verrou_planning FROM info_ecole LIMIT 1", fetchone=True)
+
+        if not result:
+            return
+
+        nom, adresse, ville, tel, cp, verrou = result
+
+        self.entry_ecole_nom.delete(0,tk.END)
+        self.entry_ecole_nom.insert(0, nom or "")
+        self.entry_ecole_adresse.delete(0,tk.END)
+        self.entry_ecole_adresse.insert(0, adresse or "")
+        self.entry_ecole_ville.delete(0,tk.END)
+        self.entry_ecole_ville.insert(0, ville or "")
+        self.entry_ecole_tel.delete(0,tk.END)
+        self.entry_ecole_tel.insert(0, tel or "")
+        self.entry_ecole_cp.delete(0,tk.END)
+        self.entry_ecole_cp.insert(0, cp or "")
+
+        self.var_verrou.set(verrou or 0)
+
+        
     def on_show(self):
         self.load_danses()
+        self.load_info_ecole()
         self.entry_danse.focus()
 
         # après avoir créé tous les widgets focusables
@@ -3005,6 +3385,31 @@ class GestionEcolePage(BasePage):
         # configure Tab/Shift+Tab
         self.setup_tab_navigation()
 
+    def save_and_return(self):
+        data = (
+            self.entry_ecole_nom.get(),
+            self.entry_ecole_adresse.get(),
+            self.entry_ecole_ville.get(),
+            self.entry_ecole_tel.get(),
+            self.entry_ecole_cp.get(),
+            self.var_verrou.get()
+        )
+
+        existing = lanceRequete("SELECT 1 FROM info_ecole LIMIT 1", fetchone=True)
+
+        if existing:
+            lanceRequete("""
+                UPDATE info_ecole 
+                SET nom=?, adresse=?, ville=?, telephone=?, code_postal=?, verrou_planning=?
+            """, data)
+        else:
+            lanceRequete("""
+                INSERT INTO info_ecole(nom, adresse, ville, telephone, code_postal, verrou_planning)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, data)
+
+        self.controller.show_frame("StartPage")
+
     def reset_database(self):
         confirm = messagebox.askyesno(
             "Tout supprimer",
@@ -3015,6 +3420,7 @@ class GestionEcolePage(BasePage):
             return
 
         lanceRequete("""
+                DELETE FROM inscription_cours;
                 DELETE FROM cours_prof;
                 DELETE FROM cours;
                 DELETE FROM salle;
@@ -3023,7 +3429,7 @@ class GestionEcolePage(BasePage):
                 DELETE FROM niveau;
 
                 DELETE FROM sqlite_sequence 
-                WHERE name IN ('salle', 'prof', 'cours_prof', 'cours', 'danse', 'niveau')""",many=True)
+                WHERE name IN ('salle', 'prof', 'cours_prof', 'cours', 'danse', 'niveau', 'inscription_cours')""",many=True)
         
         self.load_danses()
         
@@ -3241,13 +3647,6 @@ class SearchUserWindow(tk.Toplevel):
 
         self.title("Recherche danseur")
         
-
-        # dimensions souhaitées
-        width = 800
-        height = 500
-
-        self.geometry(f"{width}x{height}")
-
         container = tk.Frame(self)
         container.pack(fill="both", expand=True)
 
@@ -3258,11 +3657,12 @@ class SearchUserWindow(tk.Toplevel):
             self.frames[Page.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
 
-        self.show_frame("SeekUserPage")
         self.transient(parent)   # optionnel, si tu veux que la fenêtre soit au-dessus de la fenêtre principale
         self.grab_set()          # bloque la fenêtre principale
         self.focus_set()         # donne le focus à la Toplevel
         self.after(100, lambda: self.frames["SeekUserPage"].seekUser_nom.focus_set())
+
+        self.show_frame("SeekUserPage")
 
     def show_frame(self, name, data=None):
         frame = self.frames[name]
@@ -3281,10 +3681,10 @@ class SearchUserWindow(tk.Toplevel):
             frame.focus_set()  # sinon focus par défaut
 
                                 # --- Modifier la taille selon la frame ---
-        if name == "SeekUserPage" or name == "SeekResultPage":
-            self.geometry("800x180")
-        else:
-            pass
+        if name == "SeekUserPage":
+            self.geometry("800x300+0+0")
+        elif name == "SeekResultPage":
+            self.geometry("800x400+0+0")
 
     def show(self):
         self.wait_window()
@@ -3330,18 +3730,42 @@ class SeekUserPage(BasePage):
         tk.Label(self, text="Ville").grid(row=2, column=2, sticky="w", padx=5, pady=5)
         self.seekUser_ville.grid(row=2, column=3, sticky="ew", padx=5, pady=5)
 
+            # -- Choix du cours ---
+        tk.Label(self, text="Cours").grid(row=3, column=0, sticky="w", padx=5, pady=5)
+        self.cours_var = tk.StringVar()
+        self.seekUser_cours = tk.Entry(self, textvariable=self.cours_var)
+        self.seekUser_cours.grid(row=3, column=1, sticky="ew", padx=5, pady=5)
+        # Label saison actuelle
+        tk.Label(self, text="Saison actuelle").grid(row=3, column=2, sticky="w", padx=5)
+        # Checkbox
+        self.saison_var = tk.IntVar(value=1)  # cochée par défaut
+        self.saison_check = tk.Checkbutton(self, variable=self.saison_var)
+        self.saison_check.grid(row=3, column=2, sticky="e", padx=5)
+        self.seekUser_listbox = tk.Listbox(self, height=4)
+        self.seekUser_listbox.grid(row=4, column=0, columnspan=4, sticky="ew", padx=5)
+        self.reload_cours()
+        self.cours_map = {label: cid for cid, label in self.all_cours}
+
         # Étirement des colonnes
         for i in range(4):
             self.columnconfigure(i, weight=1)
 
         # --- Boutons ---
         btn_frame = tk.Frame(self)
-        btn_frame.grid(row=3, column=0, columnspan=4, pady=10)
+        btn_frame.grid(row=5, column=0, columnspan=4, pady=10)
 
         self.seekUser_btSeek = tk.Button(btn_frame, text="Rechercher", command=self.recherche, underline=1)
         self.seekUser_btSeek.pack(side="left", padx=5)
         self.seekUser_btRetour = tk.Button(btn_frame, text="Retour", command=lambda: self.master.master.destroy(), underline=0)
         self.seekUser_btRetour.pack(side="left", padx=5)
+
+        self.seekUser_cours.bind("<KeyRelease>", self.update_cours_list)
+
+        self.seekUser_listbox.bind("<<ListboxSelect>>", self.on_cours_select)
+
+        self.seekUser_cours.bind("<Down>", self.focus_listbox)
+        self.seekUser_listbox.bind("<Return>", self.select_from_listbox)
+        self.saison_check.config(command=self.reload_cours)
 
         # --- Bindings raccourcis ---
         self.bind_shortcuts({
@@ -3356,9 +3780,11 @@ class SeekUserPage(BasePage):
             self.seekUser_nom,
             self.seekUser_prenom,
             self.seekUser_naissance,
+            self.seekUser_cours,
             self.seekUser_email,
             self.seekUser_tel,
             self.seekUser_ville,
+            self.seekUser_listbox,
             self.seekUser_btSeek,
             self.seekUser_btRetour,
             
@@ -3367,15 +3793,65 @@ class SeekUserPage(BasePage):
         # configure Tab/Shift+Tab
         self.setup_tab_navigation()
 
-    def recherche(self):
+    def reload_cours(self):
+        saison = get_saison_actuelle() if self.saison_var.get() else None
 
+        self.all_cours = get_all_cours(saison)
+        self.cours_map = {label: cid for cid, label in self.all_cours}
+
+        self.update_cours_list()
+
+    def select_from_listbox(self, event):
+        selection = self.seekUser_listbox.curselection()
+        if not selection:
+            return
+
+        value = self.seekUser_listbox.get(selection[0])
+        self.cours_var.set(value)
+        self.seekUser_cours.focus_set()
+
+    def focus_listbox(self, event):
+        if self.seekUser_listbox.size() > 0:
+            self.seekUser_listbox.focus_set()
+            self.seekUser_listbox.selection_set(0)
+
+    def on_cours_select(self, event):
+        selection = self.seekUser_listbox.curselection()
+        if not selection:
+            return
+
+        value = self.seekUser_listbox.get(selection[0])
+        self.cours_var.set(value)
+
+    def update_cours_list(self, event=None):
+        value = self.cours_var.get()
+
+        self.seekUser_listbox.delete(0, tk.END)
+
+        if not value:
+            return
+
+        matches = [
+            label for label in self.cours_map.keys()
+            if fuzzy_match(value, label)
+        ]
+
+        for item in matches[:50]:  # limite pour éviter lag
+            self.seekUser_listbox.insert(tk.END, item)
+
+    def recherche(self):
+        label = self.cours_var.get()
+        cours_id = self.cours_map.get(label)
+
+        print(cours_id)
         results = select_users(
             self.seekUser_nom.get(),
             self.seekUser_prenom.get(),
             self.seekUser_naissance.get(),
             self.seekUser_tel.get(),
             self.seekUser_email.get(),
-            self.seekUser_ville.get()
+            self.seekUser_ville.get(),
+            cours_id
         )
 
         if not results:
@@ -3397,13 +3873,14 @@ class SeekUserPage(BasePage):
         self.seekUser_nom.focus_set()
         self.clear_fields()
 
-class SeekResultPage(tk.Frame):
+class SeekResultPage(BasePage):
     def __init__(self, parent, controller):
-        super().__init__(parent)
-
+        super().__init__(parent, controller)
+        self.parent = parent
         self.controller = controller
 
         columns = ("id", "Nom", "Prenom", "Naissance", "Telephone")
+        columns = ("id", "nom", "prenom", "date_naissance", "telephone1")
 
         self.tree = ttk.Treeview(self, columns=columns, show="headings")
         for col in columns:
@@ -3417,11 +3894,37 @@ class SeekResultPage(tk.Frame):
         # ENTER sur ligne
         self.tree.bind("<Return>", self.on_enter)
 
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(fill="x", pady=5)
+
+        self.btn_select = tk.Button(btn_frame, text="Sélectionner",underline=0 ,command=self.validate_selection)
+        self.btn_select.pack(side="left", padx=5)
+
+        self.btn_export = tk.Button(btn_frame, text="Exporter CSV",underline=0 , command=self.export_csv)
+        self.btn_export.pack(side="left", padx=5)
+
+        self.btn_retour = tk.Button(btn_frame, text="Retour",underline=0 , command=lambda: controller.show_frame("SeekUserPage"))
+        self.btn_retour.pack(side="left", padx=5)
+
+
+        self.bind_shortcuts({
+            "<Alt-r>": lambda e: controller.show_frame("SeekUserPage"),
+            "<Alt-e>": lambda e: self.export_csv(),
+            "<Alt-s>": lambda e: self.validate_selection()
+        })
+
+
     def set_data(self, results):
         for row in self.tree.get_children():
             self.tree.delete(row)
         for row in results:
-            self.tree.insert("", "end", values=row)
+            self.tree.insert("", "end", values=(
+                row[0],  # id
+                row[1],  # nom
+                row[2],  # prenom
+                row[3],  # naissance
+                row[4],  # tel
+            ))
 
         # --- focus et sélection de la première ligne si elle existe
         self.after(50, self.focus_tree)
@@ -3448,6 +3951,28 @@ class SeekResultPage(tk.Frame):
         user_id = values[0]
 
         self.controller.select_user(user_id)
+
+    def export_csv(self):
+        # récupération des IDs depuis le TreeView
+        ids = []
+
+        for item in self.tree.get_children():
+            values = self.tree.item(item)["values"]
+
+            if values:
+                ids.append(values[0])
+
+        if not ids:
+            messagebox.showinfo(
+                "Info",
+                "Aucune donnée à exporter"
+            )
+            return
+        
+        export_users_csv(ids)
+
+        self.controller.destroy()
+
 #############################################################
 
 
@@ -3476,37 +4001,6 @@ def connect():
     conn = sqlite3.connect(DB)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
-
-def center_window(win, parent=None, width=None, height=None):
-
-    """
-    Centre une fenêtre Tkinter par rapport à son parent ou à l'écran si parent=None.
-    """
-    win.update_idletasks()
-
-    if width is None:
-        width = win.winfo_width()
-    if height is None:
-        height = win.winfo_height()
-
-    if parent:
-        # coordonnées du parent
-        px = parent.winfo_rootx()
-        py = parent.winfo_rooty()
-        pw = parent.winfo_width()
-        ph = parent.winfo_height()
-
-        x = px + (pw - width) // 2
-        y = py + (ph - height) // 2
-    else:
-        # par défaut écran principal
-        sw = win.winfo_screenwidth()
-        sh = win.winfo_screenheight()
-        x = (sw - width) // 2
-        y = (sh - height) // 2
-
-    win.geometry(f"{width}x{height}+{x}+{y}")
-# USERS ------------------------
 
 def add_user(nom, 
             prenom, 
@@ -3606,25 +4100,24 @@ def update_user(nom,
     conn.commit()
     conn.close()
 
-def select_users(nom, prenom, naissance, tel, email, ville):
-    """
-    Retourne tous les utilisateurs qui match les différents critères
-    """
+def select_users(nom, prenom, naissance, tel, email, ville, cours_id=None):
     conn = connect()
     c = conn.cursor()
 
     query = """
-        SELECT id, nom,prenom,date_naissance,telephone1 FROM users
+        SELECT DISTINCT users.*
+        FROM users
+        LEFT JOIN inscription_cours ic ON users.id = ic.user_id
         WHERE
-        nom LIKE ? AND
-        prenom LIKE ? AND
-        date_naissance LIKE ? AND
-        (telephone1 LIKE ? OR telephone2 LIKE ?) AND
-        email LIKE ? AND
-        ville LIKE ?
+            users.nom LIKE ? AND
+            users.prenom LIKE ? AND
+            users.date_naissance LIKE ? AND
+            (users.telephone1 LIKE ? OR users.telephone2 LIKE ?) AND
+            users.email LIKE ? AND
+            users.ville LIKE ?
     """
 
-    params = (
+    params = [
         f"%{nom}%",
         f"%{prenom}%",
         f"%{parse_date(naissance)}%",
@@ -3632,8 +4125,14 @@ def select_users(nom, prenom, naissance, tel, email, ville):
         f"%{tel}%",
         f"%{email}%",
         f"%{ville}%"
-    )
-    data = c.execute(query,params).fetchall()
+    ]
+
+    # 🔥 filtre cours
+    if cours_id:
+        query += " AND ic.cours_id = ?"
+        params.append(cours_id)
+
+    data = c.execute(query, params).fetchall()
     conn.close()
     return data
 
@@ -3765,7 +4264,6 @@ def est_deja_en_couple(id):
         resultat = None
     else:
         resultat = data[0]
-    print(data)
     return resultat
 
 def verification_role_ok(id1,id2):
@@ -3784,10 +4282,8 @@ def verification_role_ok(id1,id2):
     data = c.execute(query,(id1,id2)).fetchall()
     conn.close()
     if data[0][0] == data[1][0]:
-        print("false")
         return False
     else:
-        print("true")
         return True
         
 def modifier_role_sql(id):
@@ -3844,7 +4340,6 @@ def ajoutCours(danse_id, niveau_id, salle_id, jour, heure_debut, heure_fin, sais
                  (danse_id, niveau_id, salle_id, jour, heure_debut, heure_fin,saison),
                  insert=True, debug=True
                  )
-    print(lastID)
     for idProf in list_prof:
         lanceRequete("INSERT INTO cours_prof (cours_id, prof_id, saison) VALUES (?,?,?)",(lastID,idProf, saison))
    
@@ -4069,6 +4564,267 @@ def ajouter_inscription(cursor, user_id, cours_id, role):
         VALUES (?, ?, ?)
     """, (user_id, cours_id, role))
 
+def gerer_inscription_cours(parent, controller, user_id, cours_id, refresh_callback=None):
+    """
+    Gère :
+    - inscription si non inscrit
+    - désinscription (avec partenaire)
+    """
+
+    # 1️⃣ Vérifier inscription user
+    query_user = """
+        SELECT id
+        FROM inscription_cours
+        WHERE cours_id = ? AND user_id = ?
+    """
+    inscription_user = lanceRequete(query_user, (cours_id, user_id), fetchone=True)
+
+    # -------------------------
+    # 👉 PAS INSCRIT → INSCRIPTION
+    # -------------------------
+    if not inscription_user:
+        modal = EditInscriptionModal(
+            parent=parent,
+            controller=controller,
+            id_user=user_id,
+            id_cours=cours_id
+        )
+        parent.wait_window(modal)
+
+        if refresh_callback:
+            refresh_callback()
+
+        return
+
+    # -------------------------
+    # 👉 INSCRIT → DESINSCRIPTION
+    # -------------------------
+    if not messagebox.askyesno("Désinscription", "Voulez-vous vous désinscrire ?"):
+        return
+
+    # récupérer partenaire
+    query_partner = """
+        SELECT u2.id, u2.prenom
+        FROM users u1
+        LEFT JOIN users u2 ON u1.partner_id = u2.id
+        WHERE u1.id = ?
+    """
+    partner_row = lanceRequete(query_partner, (user_id,), fetchone=True)
+
+    partenaire_id = partner_row[0] if partner_row else None
+    partenaire_prenom = partner_row[1] if partner_row else None
+
+    # vérifier inscription partenaire
+    inscription_partner = None
+    if partenaire_id:
+        query_partner_insc = """
+            SELECT id
+            FROM inscription_cours
+            WHERE cours_id = ? AND user_id = ?
+        """
+        inscription_partner = lanceRequete(
+            query_partner_insc,
+            (cours_id, partenaire_id),
+            fetchone=True
+        )
+
+    # suppression
+    conn = sqlite3.connect("db.sqlite")
+    cur = conn.cursor()
+
+    try:
+        cur.execute("DELETE FROM inscription_cours WHERE id = ?", (inscription_user[0],))
+
+        if inscription_partner:
+            if messagebox.askyesno(
+                "Désinscription partenaire",
+                f"{partenaire_prenom} est aussi inscrit(e).\nDésinscrire ?"
+            ):
+                cur.execute("DELETE FROM inscription_cours WHERE id = ?", (inscription_partner[0],))
+
+        conn.commit()
+
+        if refresh_callback:
+            refresh_callback()
+
+    except Exception as e:
+        conn.rollback()
+        messagebox.showerror("Erreur", str(e))
+
+    finally:
+        conn.close()
+
+def verifier_tables_requises():
+    tables = ["prof", "salle", "danse", "niveau"]
+    tables_vides = []
+
+    for table in tables:
+        result = lanceRequete(
+            f"SELECT COUNT(*) FROM {table}",
+            fetchone=True
+        )
+        
+        if result[0] == 0:
+            tables_vides.append(table)        
+
+    if tables_vides:
+        messagebox.showerror("Erreur", f"Les tables suivantes sont vides : {tables_vides} \n\nAller dans paramètres de l'école pour les remplir avant d'ouvrir le planning.")
+        return False
+    else:
+        return True
+    
+def get_all_cours(saison=None):
+    query = """
+    SELECT 
+        c.id,
+        d.nom || ' ' || n.nom || ' ' || c.jour || ' ' || c.heure_debut || ' ' || c.saison as label
+    FROM cours c
+    JOIN danse d ON c.danse_id = d.id
+    JOIN niveau n ON c.niveau_id = n.id
+    """
+
+    params = []
+
+    if saison:
+        query += " WHERE c.saison = ?"
+        params.append(saison)
+
+    query += " ORDER BY d.nom, c.jour, c.heure_debut"
+
+    return lanceRequete(query, params, fetch=True)
+
+def normalize(text):
+    text = text.lower()
+    text = ''.join(
+        c for c in unicodedata.normalize('NFD', text)
+        if unicodedata.category(c) != 'Mn'
+    )
+    return text.replace(" ", "")
+
+def fuzzy_match(input_text, target):
+    input_text = normalize(input_text)
+    target = normalize(target)
+
+    i = 0
+    for char in target:
+        if i < len(input_text) and char == input_text[i]:
+            i += 1
+    return i == len(input_text)
+
+def get_saison_actuelle():
+    now = datetime.now()
+    year = now.year % 100
+    month = now.month
+
+    if month >= 7:
+        start = year
+        end = (year + 1) % 100
+    else:
+        start = (year - 1) % 100
+        end = year
+
+    return f"{start:02d} / {end:02d}"
+
+def export_users_csv(ids):
+
+        # choix du fichier
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv")],
+            title="Enregistrer le fichier CSV"
+        )
+
+        if not filepath:
+            return
+
+        try:
+            conn = sqlite3.connect("db.sqlite")
+            cursor = conn.cursor()
+
+            # récupération des colonnes
+            cursor.execute("PRAGMA table_info(users)")
+            table_info = cursor.fetchall()
+
+            # noms des colonnes
+            columns = [col[1] for col in table_info]
+
+            # dernière colonne = partner_id
+            last_column = columns[-1]
+
+            # toutes les colonnes sauf partner_id
+            normal_columns = columns[:-1]
+
+            # SELECT dynamique
+            select_parts = [f"u.{col}" for col in normal_columns]
+
+            # ajout du nom du partenaire
+            select_parts.append("""
+                CASE
+                    WHEN p.id IS NOT NULL
+                    THEN p.prenom || '-' || p.nom
+                    ELSE ''
+                END AS partner_name
+            """)
+
+            select_query = ",\n".join(select_parts)
+
+            # placeholders
+            placeholders = ",".join(["?"] * len(ids))
+
+            query = f"""
+                SELECT
+                    {select_query}
+                FROM users u
+                LEFT JOIN users p
+                    ON u.{last_column} = p.id
+                WHERE u.id IN ({placeholders})
+            """
+
+            cursor.execute(query, tuple(ids))
+
+            # données
+            rows = cursor.fetchall()
+
+            if not rows:
+                messagebox.showinfo(
+                    "Info",
+                    "Aucun utilisateur trouvé"
+                )
+                return
+
+            # headers
+            headers = normal_columns + ["partner_name"]
+
+            # écriture CSV
+            with open(
+                filepath,
+                mode="w",
+                newline="",
+                encoding="utf-8"
+            ) as file:
+
+                writer = csv.writer(
+                    file,
+                    delimiter=";",
+                    quoting=csv.QUOTE_ALL
+                )
+
+                writer.writerow(headers)
+                writer.writerows(rows)
+
+            conn.close()
+
+            messagebox.showinfo(
+                "Succès",
+                "Export CSV terminé"
+            )
+
+
+        except Exception as e:
+            messagebox.showerror(
+                "Erreur",
+                f"Erreur lors de l'export : {e}"
+            )
 
 def lanceRequete(query, params=(), fetch=False, fetchone=False, debug=False, many=False, insert=False):
     """
@@ -4163,7 +4919,8 @@ if __name__ == "__main__":
 #   "88k.      .~       ""   'Y"    `"888*""   
 #     `""*==~~`                        ""     
 
-""" Temps passé à dev :
+""" 
+Temps passé à dev :
 18/02 3h train
 27/02 3h train 6
 03/03 9h work 15
@@ -4174,5 +4931,8 @@ if __name__ == "__main__":
 19/03 5h home 33
 20/03 3h home 36
 27/03 10h work 9 / train 3 48
+09/04 2h train 50
+10/04 7h work + train 57
+15/04 3h train 60
 
 """
