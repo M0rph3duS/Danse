@@ -8,15 +8,11 @@
 
 """
 
-dans l'export, actuellement ça part depuis le treeview, faire en sorte que ça exporte le select * from users avec le where qui va bien
-
 faire une fonction qui calcule automatiquement les jours de la semaine ou il y a cours, depuis le mois de septembre jusqu'au fin juin 
 de l'année suivante, permettra de faire des cases a cocher pour plus tard et de valider les fiches de présence
 
 faire une vue par cours avec tous les inscrit et tous les niveaux, avec des etiquettes
 séparer couples et solo
-
-
  
 """
 #    .....     .                                                                  s    
@@ -42,7 +38,8 @@ import unicodedata
 import re
 from datetime import datetime
 import csv
-
+import json
+import os
 
 
 
@@ -61,10 +58,70 @@ import csv
 #                                                                                       
 #
 
-DB = "db.sqlite"
 EMAIL_REGEX = re.compile(r".+@.+")
 TEL_REGEX = re.compile(r"^\d{10}$")
 CP_REGEX = re.compile(r"^\d{5}$")
+
+
+#      ...                                                                                                                        s    
+#   xH88"`~ .x8X      .uef^"                                                                                                     :8    
+# :8888   .f"8888Hf :d88E                      .u    .                             ..    .     :                  u.    u.      .88    
+#:8888>  X8L  ^""`  `888E             u      .d88B :@8c       uL          .u     .888: x888  x888.       .u     x@88k u@88c.   :888ooo 
+#X8888  X888h        888E .z8k     us888u.  ="8888f8888r  .ue888Nc..   ud8888.  ~`8888~'888X`?888f`   ud8888.  ^"8888""8888" -*8888888 
+#88888  !88888.      888E~?888L .@88 "8888"   4888>'88"  d88E`"888E` :888'8888.   X888  888X '888>  :888'8888.   8888  888R    8888    
+#88888   %88888      888E  888E 9888  9888    4888> '    888E  888E  d888 '88%"   X888  888X '888>  d888 '88%"   8888  888R    8888    
+#88888 '> `8888>     888E  888E 9888  9888    4888>      888E  888E  8888.+"      X888  888X '888>  8888.+"      8888  888R    8888    
+#`8888L %  ?888   !  888E  888E 9888  9888   .d888L .+   888E  888E  8888L        X888  888X '888>  8888L        8888  888R   .8888Lu= 
+# `8888  `-*""   /   888E  888E 9888  9888   ^"8888*"    888& .888E  '8888c. .+  "*88%""*88" '888!` '8888c. .+  "*88*" 8888"  ^%888*   
+#   "888.      :"   m888N= 888> "888*""888"     "Y"      *888" 888&   "88888%      `~    "    `"`    "88888%      ""   'Y"      'Y"    
+#     `""***~"`      `Y"   888   ^Y"   ^Y'                `"   "888E    "YP'                           "YP'                            
+#                         J88"                           .dWi   `88E                                                                   
+#                         @%                             4888~  J8%                                                                    
+#                       :"                                ^"===*"`                                                                    
+
+
+CONFIG_FILE = "config.json"
+
+DEFAULT_CONFIG = {
+    "db_path": "./db.sqlite"
+}
+
+
+def load_config():
+    """
+    Charge la config, ou crée une config par défaut si absente
+    """
+    if not os.path.exists(CONFIG_FILE):
+        save_config(DEFAULT_CONFIG)
+        return DEFAULT_CONFIG.copy()
+
+    try:
+        with open(CONFIG_FILE, "r") as f:
+            config = json.load(f)
+
+        # sécurité : si clé manquante
+        if "db_path" not in config:
+            config["db_path"] = DEFAULT_CONFIG["db_path"]
+            save_config(config)
+
+        return config
+
+    except Exception:
+        # fallback hard reset si fichier cassé
+        save_config(DEFAULT_CONFIG)
+        return DEFAULT_CONFIG.copy()
+
+
+def save_config(config):
+    """
+    Sauvegarde la config sur disque
+    """
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=4)
+
+
+DB = load_config()["db_path"]
+print(DB)
 
 #      ...                ..                .x+=:.      .x+=:.                 .x+=:.   
 #   xH88"`~ .x8X    x .d88"                z`    ^%    z`    ^%               z`    ^%  
@@ -154,7 +211,7 @@ class App(tk.Tk):
         container.grid_columnconfigure(0, weight=1)
 
         self.frames = {}
-        for Page in (StartPage, AddUserPage, SeekUserPage, SeekResultPage, EditUserPage, GestionEcolePage, AddCoursPage, PlanningPage):
+        for Page in (StartPage, AddUserPage, SeekUserPage, SeekResultPage, EditUserPage, GestionEcolePage, AddCoursPage, PlanningPage, DatabasePage, DuplicatePage):
             frame = Page(container, self)
             self.frames[Page.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
@@ -170,7 +227,7 @@ class App(tk.Tk):
         if hasattr(frame, "on_show"):
             frame.on_show()
 
-        if hasattr(frame, "set_data"):
+        if args and hasattr(frame, "set_data"):
             frame.set_data(*args)
 
 
@@ -184,9 +241,13 @@ class App(tk.Tk):
         elif name == "GestionEcolePage":
             self.geometry("800x800+0+0")
         elif name == "AddCoursPage":
-            self.geometry("800x350+0+0")
+            self.geometry("800x800+0+0")
+        elif name == "DatabasePage":
+            self.geometry("800x250+0+0")
         elif name == "PlanningPage":
             self.geometry("1300x900+0+0")
+        elif name == "DuplicatePage":
+            self.geometry("800x250+0+0")
 
 
 class StartPage(BasePage):
@@ -241,6 +302,7 @@ class StartPage(BasePage):
         self.bind_shortcuts({
             "<Alt-a>": lambda e: controller.show_frame("AddUserPage"),
             "<Alt-m>": lambda e: controller.show_frame("GestionEcolePage"),
+            "<Alt-g>": lambda e: controller.show_frame("DatabasePage"),
             "<Alt-c>": lambda e: controller.show_frame("AddCoursPage"),
             "<Alt-p>": lambda e: self.open_planning(),
             "<Alt-r>": lambda e: self.open_search()
@@ -901,18 +963,20 @@ class PlanningPage(BasePage):
 
             self.canvas.coords(self.tooltip, x, y, x + width, y + height)
             self.canvas.coords(self.tooltip_text, x + 5, y + 5)
-            
+
     def show_tooltip(self, cours_id):
+
         # si entre temps on a changé de cours → STOP
         if self.hovered_cours_id != cours_id:
             return
 
-        # supprime ancien tooltip si existe
         self.hide_tooltip()
+
         try:
-            # -----------------------
-            # compter Leader / Follower
-            # -----------------------
+
+            # ==========================================
+            # COUNTS
+            # ==========================================
             query_count = """
                 SELECT 
                     COUNT(CASE WHEN role = 'Leader' THEN 1 END),
@@ -920,79 +984,256 @@ class PlanningPage(BasePage):
                 FROM inscription_cours
                 WHERE cours_id = ?
             """
-            result = lanceRequete(query_count, (cours_id,), fetchone=True)
 
-            leaders = result[0] if result and result[0] else 0
-            followers = result[1] if result and result[1] else 0
+            result = lanceRequete(
+                query_count,
+                (cours_id,),
+                fetchone=True
+            )
 
-            # -----------------------
-            # récupérer commentaire
-            # -----------------------
-            query_comment = "SELECT commentaires FROM cours WHERE id = ?"
-            result_comment = lanceRequete(query_comment, (cours_id,), fetchone=True)
+            leaders_count = result[0] if result and result[0] else 0
+            followers_count = result[1] if result and result[1] else 0
 
-            commentaire = result_comment[0] if result_comment and result_comment[0] else ""
+            # ==========================================
+            # COMMENTAIRE
+            # ==========================================
+            query_comment = """
+                SELECT commentaires
+                FROM cours
+                WHERE id = ?
+            """
+
+            result_comment = lanceRequete(
+                query_comment,
+                (cours_id,),
+                fetchone=True
+            )
+
+            commentaire = (
+                result_comment[0]
+                if result_comment and result_comment[0]
+                else ""
+            )
+
+            # ==========================================
+            # INSCRITS + PARTENAIRES
+            # ==========================================
+            query_users = """
+                SELECT
+                    u.id,
+                    u.prenom,
+                    u.nom,
+                    u.role,
+                    u.partner_id,
+
+                    p.id,
+                    p.prenom,
+                    p.nom
+
+                FROM inscription_cours ic
+
+                INNER JOIN users u
+                    ON u.id = ic.user_id
+
+                LEFT JOIN users p
+                    ON p.id = u.partner_id
+
+                WHERE ic.cours_id = ?
+
+                ORDER BY u.role, u.nom, u.prenom
+            """
+
+            rows = lanceRequete(
+                query_users,
+                (cours_id,),
+                fetch=True
+            )
 
         except Exception as e:
-            leaders, followers = 0, 0
+
+            leaders_count = 0
+            followers_count = 0
             commentaire = ""
 
-        # -----------------------
-        # construire le texte
-        # -----------------------
-        texte = f"Leader : {leaders}\nFollower : {followers}"
+            rows = []
 
+        # ==========================================
+        # CONSTRUCTION DES GROUPES
+        # ==========================================
+
+        couples = []
+        leaders = []
+        followers = []
+
+        used_ids = set()
+
+        for row in rows:
+
+            (
+                user_id,
+                prenom,
+                nom,
+                role,
+                partner_id,
+
+                partner_user_id,
+                partner_prenom,
+                partner_nom
+            ) = row
+
+            fullname = f"{prenom} {nom}"
+
+            # déjà traité dans un couple
+            if user_id in used_ids:
+                continue
+
+            # =========================
+            # COUPLE
+            # =========================
+            if partner_id:
+
+                # vérifier que le partenaire
+                # est aussi inscrit au cours
+                partner_present = any(
+                    r[0] == partner_id
+                    for r in rows
+                )
+
+                if partner_present:
+
+                    couple_text = (
+                        f"{prenom} {nom}"
+                        f" -- "
+                        f"{partner_prenom} {partner_nom}"
+                    )
+
+                    couples.append(couple_text)
+
+                    used_ids.add(user_id)
+                    used_ids.add(partner_id)
+
+                    continue
+
+            # =========================
+            # SOLO
+            # =========================
+            if role == "Leader":
+                leaders.append(fullname)
+            else:
+                followers.append(fullname)
+
+        # ==========================================
+        # TEXTE TOOLTIP
+        # ==========================================
+
+        texte = (
+            f"Leader : {leaders_count}\n"
+            f"Follower : {followers_count}"
+        )
+
+        # =========================
+        # Couples
+        # =========================
+        if couples:
+
+            texte += "\n\nCouples :\n"
+
+            for c in couples:
+                texte += f"{c}\n"
+
+        # =========================
+        # Leaders
+        # =========================
+        if leaders:
+
+            texte += "\nLeaders :\n"
+
+            for l in leaders:
+                texte += f"{l}\n"
+
+        # =========================
+        # Followers
+        # =========================
+        if followers:
+
+            texte += "\nFollowers :\n"
+
+            for f in followers:
+                texte += f"{f}\n"
+
+        # =========================
+        # Commentaire
+        # =========================
         if commentaire.strip():
+
             texte += f"\n\n{commentaire}"
 
-        # -----------------------
-        # taille dynamique
-        # -----------------------
-        lines = texte.count("\n") + 1
-        width = 200
-        height = 20 + (lines * 15)
+        # ==========================================
+        # CALCUL TAILLE
+        # ==========================================
 
+        lines = texte.count("\n") + 1
+        width = 350
+
+        temp_text = self.canvas.create_text(
+            -9999,
+            -9999,
+            text=texte,
+            anchor="nw",
+            width=width - 10,
+            font=("Arial", 8)
+        )
+
+        bbox = self.canvas.bbox(temp_text)
+
+        text_height = bbox[3] - bbox[1]
+
+        self.canvas.delete(temp_text)
+
+        height = text_height + 10
         self.tooltip_width = width
         self.tooltip_height = height
 
-        # position de base
+        # ==========================================
+        # POSITION
+        # ==========================================
+
         x = self.hover_x + 15
         y = self.hover_y + 15
 
-        # dimensions du canvas
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
 
-        # -----------------------
-        # correction bord droit
-        # -----------------------
         if x + width > canvas_width:
-            x = self.hover_x - width - 15  # passe à gauche
+            x = self.hover_x - width - 15
 
-        # -----------------------
-        # correction bord bas
-        # -----------------------
         if y + height > canvas_height:
-            y = self.hover_y - height - 15  # passe au-dessus
+            y = self.hover_y - height - 15
 
-        # -----------------------
-        # dessin tooltip
-        # -----------------------
+        # ==========================================
+        # TOOLTIP
+        # ==========================================
+
         self.tooltip = self.canvas.create_rectangle(
-            x, y, x + width, y + height,
+            x,
+            y,
+            x + width,
+            y + height,
             fill="white",
             outline="black",
             tags=("tooltip",)
         )
 
         self.tooltip_text = self.canvas.create_text(
-            x + 5, y + 5,
+            x + 5,
+            y + 5,
             anchor="nw",
             text=texte,
             font=("Arial", 8),
-            width=width - 10,  # wrap auto
+            width=width - 10,
             tags=("tooltip",)
         )
+
         
     def hide_tooltip(self):
         if self.tooltip:
@@ -1436,7 +1677,7 @@ class EditCoursModal(tk.Toplevel):
             
         button_frame = tk.Frame(self)
         button_frame.pack(pady=10, fill="x")
-        self.bt_afficher = tk.Button(button_frame, text="Afficher la liste des inscrits", command=self.afficher_inscrits,underline=0)
+        self.bt_afficher = tk.Button(button_frame, text="Afficher la liste des inscrits", command=self.export_csv,underline=0)
         self.bt_retour = tk.Button(button_frame, text="Retour", command=self.destroy,underline=0)
         self.bt_afficher.pack(side="left", padx=5, expand=True)
         self.bt_retour.pack(side="left", padx=5, expand=True)
@@ -1457,7 +1698,7 @@ class EditCoursModal(tk.Toplevel):
 
         # Binds
         self.bind("<Escape>", lambda e: self.destroy())
-        self.bind("<Alt-a>", lambda e: self.afficher_inscrits())
+        self.bind("<Alt-a>", lambda e: self.export_csv())
         self.bind("<Alt-r>", lambda e: self.destroy())
     
     # ------------------------
@@ -1589,9 +1830,46 @@ class EditCoursModal(tk.Toplevel):
 
         self.fin()
 
-    def afficher_inscrits(self):
-        print(f"Afficher inscrits pour cours {self.cours_id}")
-        # à compléter : ouvrir pop-up liste inscrits
+
+    def export_csv(self):
+        # récupération des IDs depuis le TreeView
+        ids = []
+
+        data = lanceRequete(""" SELECT
+                                    u.id
+                                FROM inscription_cours ic
+
+                                INNER JOIN users u
+                                    ON u.id = ic.user_id
+
+                                WHERE ic.cours_id = ?
+
+                                ORDER BY
+                                    u.role,
+                                    u.nom,
+                                    u.prenom""",(self.cours_id,),fetch=True)
+
+        print(data)
+        print(self.cours_id)
+        
+
+        for item in data:
+                ids.append(item[0])
+
+                print(ids)
+
+        if not ids:
+            messagebox.showinfo(
+                "Info",
+                "Aucune donnée à exporter"
+            )
+            return
+        export_users_csv(ids)
+
+
+        return
+    
+        
 
     def supprimer_cours(self):
         try:
@@ -1948,6 +2226,331 @@ class AddCoursPage(BasePage):
         self.AddCours_cb_danse.focus_set()
 
 
+
+###################
+### Gestion BDD ###
+class DatabasePage(BasePage):
+    """
+    Gestion de la base SQLite active
+    """
+
+    def __init__(self, parent, controller):
+        super().__init__(parent, controller)
+
+        self.controller = controller
+
+        # =========================
+        # CONTAINER PRINCIPAL
+        # =========================
+        self.container = tk.Frame(self)
+        self.container.pack(fill="both", expand=True)
+
+        self.left_frame = tk.Frame(self.container)
+        self.right_frame = tk.Frame(self.container)
+
+        self.left_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+        self.right_frame.pack(side="right", fill="both", expand=True, padx=10, pady=10)
+
+        # =========================
+        # TITRE (LEFT)
+        # =========================
+        title = tk.Label(
+            self.left_frame,
+            text="Gestion de la base de données",
+            font=("Arial", 16, "bold")
+        )
+        title.pack(pady=10)
+
+        # =========================
+        # INFO BDD ACTUELLE
+        # =========================
+        self.db_label = tk.Label(self.left_frame, text="", font=("Arial", 10))
+        self.db_label.pack(pady=10)
+
+        # =========================
+        # BOUTON : BDD EXISTANTE
+        # =========================
+        self.btn_existing = tk.Button(
+            self.left_frame,
+            text="Choisir une base existante",
+            command=self.select_existing_db,
+            underline=0
+        )
+        self.btn_existing.pack(pady=5)
+
+        # =========================
+        # BOUTON : NOUVELLE BASE (DOSSIER)
+        # =========================
+        self.btn_new = tk.Button(
+            self.left_frame,
+            text="Créer / choisir dossier (nouvelle base)",
+            command=self.create_new_db,
+            underline=0
+        )
+        self.btn_new.pack(pady=5)
+
+        # =========================
+        # RETOUR
+        # =========================
+        self.btn_back = tk.Button(
+            self.left_frame,
+            text="Retour",
+            command=lambda: controller.show_frame("StartPage"),
+            underline=0
+        )
+        self.btn_back.pack(pady=10)
+
+        # =========================
+        # PANEL DROIT : OUTILS BDD
+        # =========================
+        tools_label = tk.Label(
+            self.right_frame,
+            text="Outils de détection",
+            font=("Arial", 14, "bold")
+        )
+        tools_label.pack(pady=10)
+
+        tools_box = tk.LabelFrame(self.right_frame, text="Doublons")
+        tools_box.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # --- placeholders boutons ---
+        self.btn_dup_phone = tk.Button(
+            tools_box,
+            text="Détecter doublons téléphone",
+            command=self.detect_duplicate_phones_placeholder
+        )
+        self.btn_dup_phone.pack(pady=10, fill="x")
+
+        self.btn_dup_email = tk.Button(
+            tools_box,
+            text="Détecter doublons emails",
+            command=self.detect_duplicate_emails_placeholder
+        )
+        self.btn_dup_email.pack(pady=10, fill="x")
+
+        # =========================
+        # SHORTCUTS
+        # =========================
+        self.bind_shortcuts({
+            "<Alt-r>": lambda e: self.controller.show_frame("StartPage"),
+            "<Alt-e>": lambda e: self.select_existing_db(),
+            "<Alt-n>": lambda e: self.create_new_db(),
+        })
+
+    # =========================
+    # PLACEHOLDERS DOUBLONS
+    # =========================
+    def detect_duplicate_phones_placeholder(self):
+
+        query = """
+            SELECT id, nom, prenom, telephone1, telephone2, email
+            FROM users
+        """
+
+        rows = lanceRequete(query, fetch=True)
+
+        users = []
+
+        for r in rows:
+            users.append({
+                "id": r[0],
+                "nom": r[1],
+                "prenom": r[2],
+                "tel": r[3],
+                "mail": r[5]
+            })
+
+        pairs = []
+
+        n = len(users)
+
+        for i in range(n):
+            for j in range(i + 1, n):
+
+                u1 = users[i]
+                u2 = users[j]
+
+                t1 = (u1["tel"] or "").strip()
+                t2 = (u2["tel"] or "").strip()
+
+                if not t1 or not t2:
+                    continue
+
+                if levenshtein(t1, t2) <= 2:
+                    pairs.append((u1, u2))
+
+        self.controller.frames["DuplicatePage"].set_data(pairs)
+        self.controller.show_frame("DuplicatePage")
+
+    def detect_duplicate_emails_placeholder(self):
+        messagebox.showinfo("Info", "Détection doublons email (à implémenter)")
+
+    # -------------------------
+    # affichage
+    # -------------------------
+    def on_show(self):
+        db_path = DB
+
+        if not db_path:
+            db_path = "Aucune base chargée"
+
+        self.db_label.config(text=f"Base actuelle : {db_path}")
+
+    # -------------------------
+    # choisir fichier existant
+    # -------------------------
+    def select_existing_db(self):
+        file_path = filedialog.askopenfilename(
+            title="Choisir une base SQLite existante",
+            filetypes=[("SQLite DB", "*.sqlite *.db"), ("Tous fichiers", "*.*")]
+        )
+
+        if not file_path:
+            return
+
+        self.set_db(file_path)
+
+    # -------------------------
+    # créer / choisir dossier
+    # -------------------------
+    def create_new_db(self):
+        import os
+        import sqlite3
+
+        folder = filedialog.askdirectory(
+            title="Choisir un dossier pour la base SQLite"
+        )
+
+        if not folder:
+            return
+
+        if not os.path.isdir(folder):
+            messagebox.showerror("Erreur", "Dossier invalide")
+            return
+
+        db_path = os.path.join(folder, "db.sqlite")
+
+        if not os.path.exists(db_path):
+            initialize_DB(db_path)
+
+        self.set_db(db_path)
+
+    # -------------------------
+    # centralisation changement DB
+    # -------------------------
+    def set_db(self, db_path):
+        global DB
+        DB = db_path
+
+        messagebox.showinfo("OK", f"Base active :\n{db_path}")
+
+        config = {}
+        config["db_path"] = db_path
+        print(config)
+
+        save_config(config)
+
+        self.on_show()
+
+class DuplicatePage(BasePage):
+    """
+    Page générique d'affichage des doublons
+    """
+
+    def __init__(self, parent, controller):
+        super().__init__(parent, controller)
+
+        self.controller = controller
+
+        # =========================
+        # CONFIG GRID PRINCIPAL
+        # =========================
+        self.grid_rowconfigure(0, weight=1)  # 10%
+        self.grid_rowconfigure(1, weight=8)  # 80%
+        self.grid_rowconfigure(2, weight=1)  # 10%
+        self.grid_columnconfigure(0, weight=1)
+
+        # =========================
+        # TITRE (10%)
+        # =========================
+        self.title_label = tk.Label(
+            self,
+            text="Doublons potentiels",
+            font=("Arial", 16, "bold")
+        )
+        self.title_label.grid(row=0, column=0, sticky="nsew")
+
+        # =========================
+        # FRAME LISTE (80%)
+        # =========================
+        self.list_frame = tk.Frame(self)
+        self.list_frame.grid(row=1, column=0, sticky="nsew")
+
+        self.list_frame.grid_rowconfigure(0, weight=1)
+        self.list_frame.grid_columnconfigure(0, weight=1)
+
+        self.scrollbar = tk.Scrollbar(self.list_frame)
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+
+        self.listbox = tk.Listbox(
+            self.list_frame,
+            yscrollcommand=self.scrollbar.set
+        )
+        self.listbox.grid(row=0, column=0, sticky="nsew")
+
+        self.scrollbar.config(command=self.listbox.yview)
+
+        self.listbox.bind("<Double-1>", self.on_double_click)
+
+        # =========================
+        # BOUTON(S) BAS (10%)
+        # =========================
+        self.bottom_frame = tk.Frame(self)
+        self.bottom_frame.grid(row=2, column=0, sticky="nsew")
+
+        self.btn_back = tk.Button(
+            self.bottom_frame,
+            text="Retour",
+            command=lambda: controller.show_frame("DatabasePage"),
+            underline=0
+        )
+        self.btn_back.pack(pady=5)
+
+        self.bind_shortcuts({
+            "<Alt-r>": lambda e: controller.show_frame("DatabasePage")
+        })
+
+    # =========================
+    # DATA
+    # =========================
+    def set_data(self, pairs):
+        self.listbox.delete(0, tk.END)
+
+        if not pairs:
+            return
+
+        for u1, u2 in pairs:
+
+            line = (
+                f"{u1.get('prenom','')} {u1.get('nom','')} "
+                f"{u1.get('tel','')} {u1.get('mail','')} "
+                f"|| "
+                f"{u2.get('prenom','')} {u2.get('nom','')} "
+                f"{u2.get('tel','')} {u2.get('mail','')}"
+            )
+
+            self.listbox.insert(tk.END, line)
+
+    # =========================
+    # DOUBLE CLICK
+    # =========================
+    def on_double_click(self, event):
+        selection = self.listbox.curselection()
+        if not selection:
+            return
+
+        value = self.listbox.get(selection[0])
+        print("Double click sur :", value)
 ###########################
 ### Gestion utilisateur ###
 class AddUserPage(BasePage):
@@ -2168,6 +2771,8 @@ class AddUserPage(BasePage):
     def on_show(self):
         self.clear_fields()
         self.addUser_role.focus_set()
+
+
 
 class EditUserPage(BasePage):
     """
@@ -4826,6 +5431,35 @@ def export_users_csv(ids):
                 f"Erreur lors de l'export : {e}"
             )
 
+def initialize_DB(db_path):
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    with open("schema.sql") as f:
+        c.executescript(f.read())
+    conn.commit()
+    conn.close()
+    print("DB initialized")
+    
+def levenshtein(a, b):
+    if len(a) < len(b):
+        a, b = b, a
+
+    if len(b) == 0:
+        return len(a)
+
+    previous_row = list(range(len(b) + 1))
+
+    for i, ca in enumerate(a, 1):
+        current_row = [i]
+        for j, cb in enumerate(b, 1):
+            insertions = previous_row[j] + 1
+            deletions = current_row[j - 1] + 1
+            substitutions = previous_row[j - 1] + (ca != cb)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+
+    return previous_row[-1]
+
 def lanceRequete(query, params=(), fetch=False, fetchone=False, debug=False, many=False, insert=False):
     """
     Le fameux LanceRequete, mondiallement connu dans son quartier !
@@ -4866,24 +5500,6 @@ def lanceRequete(query, params=(), fetch=False, fetchone=False, debug=False, man
 
 
 
-#      ...                                                                                                                        s    
-#   xH88"`~ .x8X      .uef^"                                                                                                     :8    
-# :8888   .f"8888Hf :d88E                      .u    .                             ..    .     :                  u.    u.      .88    
-#:8888>  X8L  ^""`  `888E             u      .d88B :@8c       uL          .u     .888: x888  x888.       .u     x@88k u@88c.   :888ooo 
-#X8888  X888h        888E .z8k     us888u.  ="8888f8888r  .ue888Nc..   ud8888.  ~`8888~'888X`?888f`   ud8888.  ^"8888""8888" -*8888888 
-#88888  !88888.      888E~?888L .@88 "8888"   4888>'88"  d88E`"888E` :888'8888.   X888  888X '888>  :888'8888.   8888  888R    8888    
-#88888   %88888      888E  888E 9888  9888    4888> '    888E  888E  d888 '88%"   X888  888X '888>  d888 '88%"   8888  888R    8888    
-#88888 '> `8888>     888E  888E 9888  9888    4888>      888E  888E  8888.+"      X888  888X '888>  8888.+"      8888  888R    8888    
-#`8888L %  ?888   !  888E  888E 9888  9888   .d888L .+   888E  888E  8888L        X888  888X '888>  8888L        8888  888R   .8888Lu= 
-# `8888  `-*""   /   888E  888E 9888  9888   ^"8888*"    888& .888E  '8888c. .+  "*88%""*88" '888!` '8888c. .+  "*88*" 8888"  ^%888*   
-#   "888.      :"   m888N= 888> "888*""888"     "Y"      *888" 888&   "88888%      `~    "    `"`    "88888%      ""   'Y"      'Y"    
-#     `""***~"`      `Y"   888   ^Y"   ^Y'                `"   "888E    "YP'                           "YP'                            
-#                         J88"                           .dWi   `88E                                                                   
-#                         @%                             4888~  J8%                                                                    
-#                       :"                                ^"===*"`                                                                    
-
-
-
 
 #    ....      ..                                                                                       
 #  +^""888h. ~"888h                                                                                     
@@ -4903,7 +5519,25 @@ def lanceRequete(query, params=(), fetch=False, fetchone=False, debug=False, man
 
 
 if __name__ == "__main__":
+
+
+    # Zone de test
+
+    # Vérification existance du fichier
+    if not os.path.exists(DB):
+        reponse = messagebox.askyesno("Attention", f"La base de donnée {DB} n'est pas accessible. Le fichier a pu être supprimé, déplacé, kidnappé, voir corrompu par un mammouth enragé, où simplement le réseau ne fonctionne pas.\n\nReplacer le fichier a sa place, ou supprimer le fichier config dans le repertoire afin de réinitialiser la base de donnée dans le répertoire local. \n\nSi c'est la première utilisation, cliquer sur Oui pour créer une nouvelle base de donnée. Sinon cliquer sur Non")
+
+        if reponse:
+            initialize_DB(DB)
+        else:
+            exit()
+
+    # tentative de connexion a la bdd           
+    # try:
     App().mainloop()
+    # except:
+        # messagebox.showerror("Erreur", f"Le fichier {DB} existe, mais n'est pas lisible. placer une sauvegarde, ou supprimer le fichier  config dans le répertoire pour créer une nouvelle base localement")
+
 
 
 #      ..      .                      ..       
@@ -4934,5 +5568,6 @@ Temps passé à dev :
 09/04 2h train 50
 10/04 7h work + train 57
 15/04 3h train 60
+22/05 4h taff / train 64
 
 """
